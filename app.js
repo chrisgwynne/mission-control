@@ -292,8 +292,12 @@ function renderKanban() {
 
       const di = dueInfo(t);
       const needsApproval = Number(t.needs_approval) === 1;
+      const launchGate = String(t.launch_gate || (needsApproval ? 'review' : 'auto'));
       const criticalClass = Number(t.priority) === 4 ? 'mc-critical' : '';
       const approvalChip = needsApproval ? `<span class="text-[10px] uppercase tracking-[0.14em] rounded-full px-2 py-1 border bg-[#fdecec] border-[#f5caca] text-[#7a1c14]">Approval</span>` : '';
+      const gateChip = launchGate === 'review'
+        ? `<span class="text-[10px] uppercase tracking-[0.14em] rounded-full px-2 py-1 border bg-[#eef2ff] border-[#c7d2fe] text-[#1e3a8a]">Review</span>`
+        : `<span class="text-[10px] uppercase tracking-[0.14em] rounded-full px-2 py-1 border bg-[#f3f4f6] border-[#e5e7eb] text-ink-700">Auto</span>`;
       const dueChip = '';
 
       const reportChip = t.latestReport && t.latestReport.id
@@ -326,6 +330,7 @@ function renderKanban() {
           <p class="mt-2 text-xs text-ink-600 leading-relaxed line-clamp-3">${renderContent(t.description || '')}</p>
           <div class="mt-3 flex flex-wrap gap-1.5">
             ${reportChip}
+            ${gateChip}
             ${approvalChip}
             ${dueChip}
           </div>

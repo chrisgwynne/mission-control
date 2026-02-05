@@ -35,6 +35,9 @@ function ensureSchema() {
     if (!cols.includes('checklist')) {
       db.exec(`ALTER TABLE tasks ADD COLUMN checklist TEXT NOT NULL DEFAULT ''`);
     }
+    if (!cols.includes('launch_gate')) {
+      db.exec(`ALTER TABLE tasks ADD COLUMN launch_gate TEXT NOT NULL DEFAULT 'auto'`);
+    }
 
     // room_messages + room_mentions tables
     const tables = db.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all().map(r => r.name);
@@ -434,7 +437,7 @@ app.post('/api/workloop/quiet', (req, res) => {
 });
 
 app.post('/api/tasks', (req, res) => {
-  const { title, description = '', status = 'inbox', priority = 2, needsApproval, checklist = '', assigneeIds = [], byAgentId = 'zeus' } = req.body || {};
+  const { title, description = '', status = 'inbox', priority = 2, needsApproval, checklist = '', launchGate, assigneeIds = [], byAgentId = 'zeus' } = req.body || {};
   if (!title || typeof title !== 'string') return res.status(400).json({ error: 'title required' });
 
   const db = openDb();
@@ -443,9 +446,10 @@ app.post('/api/tasks', (req, res) => {
 
   try {
     const needs_approval = (needsApproval != null) ? Number(!!needsApproval) : (Number(priority) === 4 ? 1 : 0);
+    const launch_gate = (launchGate != null) ? String(launchGate) : (needs_approval ? 'review' : 'auto');
 
-    db.prepare(`INSERT INTO tasks (id, title, description, status, priority, needs_approval, checklist, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, title, description, status, priority, needs_approval, checklist || '', ts, ts);
+    db.prepare(`INSERT INTO tasks (id, title, description, status, priority, needs_approval, checklist, launch_gate, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, title, description, status, priority, needs_approval, checklist || '', launch_gate, ts, ts);
 
     for (const aid of assigneeIds) {
       db.prepare('INSERT OR IGNORE INTO task_assignees (task_id, agent_id) VALUES (?, ?)').run(id, aid);
@@ -493,7 +497,7 @@ app.delete('/api/tasks/:id', (req, res) => {
 
 app.patch('/api/tasks/:id', (req, res) => {
   const id = req.params.id;
-  const { title, description, status, priority, needsApproval, checklist, assigneeIds, byAgentId = 'zeus' } = req.body || {};
+  const { title, description, status, priority, needsApproval, checklist, launchGate, assigneeIds, byAgentId = 'zeus' } = req.body || {};
   const db = openDb();
   const ts = nowMs();
 
@@ -510,6 +514,7 @@ app.patch('/api/tasks/:id', (req, res) => {
       priority = COALESCE(?, priority),
       needs_approval = COALESCE(?, needs_approval),
       checklist = COALESCE(?, checklist),
+      launch_gate = COALESCE(?, launch_gate),
       updated_at = ?
       WHERE id = ?
     `).run(
@@ -519,6 +524,7 @@ app.patch('/api/tasks/:id', (req, res) => {
       priority ?? null,
       (needsApproval != null) ? Number(!!needsApproval) : null,
       (checklist != null) ? String(checklist) : null,
+      (launchGate != null) ? String(launchGate) : null,
       ts,
       id
     );
