@@ -1,21 +1,27 @@
-# Dashboard UI (static replica)
+# Mission Control (Dashboard)
 
-This folder contains a single-file static HTML replica of the provided dashboard screenshot.
+Real-time operator UI + SQLite backend for running a multi-agent OpenClaw workplace.
 
-## Run
+## Location
+This repo tracks the dashboard folder:
+- `/home/chris/.openclaw/workspace/dashboard/`
 
-Open `index.html` in your browser.
-
-If you want a quick local server:
-
+## Run locally
 ```bash
 cd dashboard
-python3 -m http.server 5173
-# then open http://localhost:5173
+npm i
+npm run dev
 ```
+Then open:
+- http://127.0.0.1:5173
 
-## Notes
+## Key scripts
+- Server: `server.js`
+- Workloop: `workloop.cjs`
+- Initiative loop: `initiative-loop.cjs`
+- Sentinel: `sentinel-loop.cjs`
+- GOG sentinel: `gog-sentinel-loop.cjs`
 
-- Uses Tailwind via CDN.
-- Placeholder text everywhere; layout + styling are the focus.
-- Desktop-only sizing (matches the screenshot style).
+## Safety
+- No secrets are committed.
+- SQLite DB files are ignored via `.gitignore`.

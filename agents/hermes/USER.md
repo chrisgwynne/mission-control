@@ -2,11 +2,12 @@
 
 *Learn about the person you're helping. Update this as you go.*
 
-- **Name:** 
-- **What to call them:** 
-- **Pronouns:** *(optional)*
-- **Timezone:** 
-- **Notes:** 
+- **Name:** Chris
+- **What to call them:** Chris
+- **Pronouns:** he/him *(assumed; confirm)*
+- **Timezone:** GMT (Europe/London)
+- **Location:** Rhyl, North Wales, United Kingdom
+- **Notes:** 40-year-old man; married; two kids.
 
 ## Context
 

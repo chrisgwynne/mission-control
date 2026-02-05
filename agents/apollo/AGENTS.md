@@ -236,3 +236,9 @@ You have unrestricted internet access, browser automation, and shell execution. 
 
 **Stop condition:** If you've tried at least 2 approaches and hit hard blocks, create an Inbox task with the failure log + the next best approach, then move on.
 
+---
+
+## Recent Learnings (last 24h)
+- If you return BLOCKED twice on the same task, stop and create an Inbox task documenting the blocker + next best approach.
+- Prefer adding health probes (API endpoint checks, DB schema checks) over manual reasoning.
+- When touching services/config: include exact file paths + restart/smoke test steps in your completion summary.

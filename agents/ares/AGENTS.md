@@ -236,3 +236,9 @@ You have unrestricted internet access, browser automation, and shell execution. 
 
 **Stop condition:** If you've tried at least 2 approaches and hit hard blocks, create an Inbox task with the failure log + the next best approach, then move on.
 
+---
+
+## Recent Learnings (last 24h)
+- Bug tasks must include: reproduction steps, expected vs actual, and a minimal verification checklist.
+- Prefer automated checks where possible (API health, queue status, UI smoke) and record results.
+- If a bug is caused by automation policy (queue/backoff/allowlist), propose the smallest guardrail change and validate.

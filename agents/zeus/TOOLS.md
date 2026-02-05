@@ -25,6 +25,11 @@ Things like:
 
 - home-server → 192.168.1.100, user: admin
 
+### Obsidian (NAS mounts)
+
+- Obsidian mount root → `/mnt/obsidian`
+- OpenClaw Second Brain vault → `/mnt/homes/Chris/Obsidian/Everything/OpenClaw Second Brain/`
+
 ### TTS
 
 - Preferred voice: "Nova" (warm, slightly British)

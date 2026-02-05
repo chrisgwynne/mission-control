@@ -92,6 +92,20 @@ function ensureSchema() {
       CREATE INDEX IF NOT EXISTS idx_task_links_to ON task_links(to_task_id);`);
     }
 
+    // Task reports: attach markdown reports to tasks
+    if (!tables.includes('task_reports')) {
+      db.exec(`CREATE TABLE IF NOT EXISTS task_reports (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        agent_id TEXT,
+        rel_path TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+        FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE SET NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_task_reports_task ON task_reports(task_id, created_at DESC);`);
+    }
+
     // FTS5 virtual tables for search
     if (!tables.includes('tasks_fts')) {
       db.exec(`CREATE VIRTUAL TABLE tasks_fts USING fts5(
@@ -171,6 +185,7 @@ function buildState(db) {
   const tasks = db.prepare('SELECT * FROM tasks ORDER BY updated_at DESC').all();
   const assignees = db.prepare('SELECT * FROM task_assignees').all();
   const messages = db.prepare('SELECT * FROM messages ORDER BY created_at DESC LIMIT 50').all();
+  const reports = db.prepare('SELECT * FROM task_reports ORDER BY created_at DESC').all();
   const commentCounts = db.prepare('SELECT from_agent_id as agent_id, COUNT(*) as c FROM messages GROUP BY from_agent_id').all();
   const activities = db.prepare('SELECT * FROM activities ORDER BY created_at DESC LIMIT 50').all();
 
@@ -187,9 +202,18 @@ function buildState(db) {
     commentCountsByAgent.set(row.agent_id, row.c || 0);
   }
 
+  const latestReportByTask = new Map();
+  for (const r of reports) {
+    if (!latestReportByTask.has(r.task_id)) latestReportByTask.set(r.task_id, r);
+  }
+
   return {
     agents: agents.map(a => ({ ...a, commentCount: commentCountsByAgent.get(a.id) || 0 })),
-    tasks: tasks.map(t => ({ ...t, assigneeIds: taskAssigneesByTask.get(t.id) || [] })),
+    tasks: tasks.map(t => ({
+      ...t,
+      assigneeIds: taskAssigneesByTask.get(t.id) || [],
+      latestReport: latestReportByTask.get(t.id) || null,
+    })),
     messages,
     activities,
     serverTime: nowMs(),
@@ -388,6 +412,27 @@ app.get('/api/state', (req, res) => {
   }
 });
 
+// Workloop control (pause via workloop.quiet)
+app.get('/api/workloop/quiet', (req, res) => {
+  const p = path.resolve(process.cwd(), 'workloop.quiet');
+  res.json({ ok: true, quiet: fs.existsSync(p) });
+});
+
+app.post('/api/workloop/quiet', (req, res) => {
+  const { quiet } = req.body || {};
+  const p = path.resolve(process.cwd(), 'workloop.quiet');
+  try {
+    if (quiet) {
+      fs.writeFileSync(p, `quiet enabled at ${new Date().toISOString()}\n`, 'utf8');
+    } else {
+      if (fs.existsSync(p)) fs.unlinkSync(p);
+    }
+    res.json({ ok: true, quiet: fs.existsSync(p) });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 app.post('/api/tasks', (req, res) => {
   const { title, description = '', status = 'inbox', priority = 2, needsApproval, checklist = '', assigneeIds = [], byAgentId = 'zeus' } = req.body || {};
   if (!title || typeof title !== 'string') return res.status(400).json({ error: 'title required' });
@@ -534,6 +579,18 @@ app.post('/api/messages', (req, res) => {
       }
     }
 
+    // Attach reports via magic tag: REPORT_FILE: <relative/path.md>
+    const m = content.match(/REPORT_FILE:\s*([^\n\r]+)/i);
+    if (m) {
+      const rel = String(m[1] || '').trim();
+      if (rel && rel.length < 260 && !rel.includes('..') && !rel.startsWith('/') && (rel.endsWith('.md') || rel.endsWith('.txt'))) {
+        db.prepare(`INSERT INTO task_reports (id, task_id, agent_id, rel_path, created_at)
+                    VALUES (?, ?, ?, ?, ?)`).run(nanoid(10), taskId, fromAgentId, rel, ts);
+        db.prepare(`INSERT INTO activities (id, type, agent_id, task_id, message, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)`).run(nanoid(10), 'report_attached', byAgentId, taskId, `Report attached: ${rel}`, ts);
+      }
+    }
+
     const msg = db.prepare('SELECT * FROM messages WHERE id=?').get(id);
     res.json({ ok: true, message: msg });
   } finally {
@@ -541,8 +598,48 @@ app.post('/api/messages', (req, res) => {
   }
 });
 
+// Reports: list + fetch
+const REPORTS_ROOT = '/home/chris/.openclaw/workspace/dashboard/agents';
+
+app.get('/api/tasks/:id/reports', (req, res) => {
+  const taskId = req.params.id;
+  const db = openDb();
+  try {
+    const rows = db.prepare(`SELECT * FROM task_reports WHERE task_id=? ORDER BY created_at DESC LIMIT 20`).all(taskId);
+    res.json({ ok: true, taskId, reports: rows });
+  } finally {
+    db.close();
+  }
+});
+
+app.get('/api/reports/:reportId', (req, res) => {
+  const reportId = req.params.reportId;
+  const db = openDb();
+  try {
+    const r = db.prepare(`SELECT * FROM task_reports WHERE id=?`).get(reportId);
+    if (!r) return res.status(404).json({ ok: false, error: 'not found' });
+
+    const rel = String(r.rel_path || '').replace(/^\/+/, '');
+    if (!rel || rel.includes('..')) return res.status(400).json({ ok: false, error: 'bad path' });
+
+    // If agent_id is known, scope to that agent folder; otherwise allow anywhere under REPORTS_ROOT.
+    const base = r.agent_id ? path.join(REPORTS_ROOT, r.agent_id) : REPORTS_ROOT;
+    const full = path.resolve(base, rel);
+    if (!full.startsWith(path.resolve(base))) return res.status(400).json({ ok: false, error: 'path escape' });
+
+    if (!fs.existsSync(full)) return res.status(404).json({ ok: false, error: 'file missing' });
+    const stat = fs.statSync(full);
+    if (stat.size > 2_000_000) return res.status(413).json({ ok: false, error: 'file too large' });
+
+    const text = fs.readFileSync(full, 'utf8');
+    res.json({ ok: true, report: r, content: text });
+  } finally {
+    db.close();
+  }
+});
+
 // Create a standalone activity item (docs/decisions/etc)
-app.post('/api/activities', (req, res) => {
+app.post('/api/activities', (req, res) => { 
   const { type, agentId = null, taskId = null, message } = req.body || {};
   if (!type || typeof type !== 'string') return res.status(400).json({ error: 'type required' });
   if (!message || typeof message !== 'string') return res.status(400).json({ error: 'message required' });
@@ -782,6 +879,122 @@ app.post('/api/rooms/:id/messages', (req, res) => {
   } finally {
     db.close();
   }
+});
+
+app.post('/api/agents', (req, res) => {
+  const { id, name, role, level = 'spc', status = 'idle' } = req.body || {};
+  if (!id || !name || !role) return res.status(400).json({ error: 'id, name, role required' });
+  const agentId = String(id).toLowerCase();
+  if (!/^[a-z0-9_-]{2,32}$/.test(agentId)) return res.status(400).json({ error: 'bad id' });
+
+  const db = openDb();
+  const ts = nowMs();
+  try {
+    const existing = db.prepare('SELECT id FROM agents WHERE id=?').get(agentId);
+    if (existing) return res.status(409).json({ error: 'agent exists' });
+
+    db.prepare(`INSERT INTO agents (id, name, role, level, status, session_key, last_seen_at, created_at)
+                VALUES (?, ?, ?, ?, ?, NULL, NULL, ?)`).run(agentId, String(name), String(role), String(level || 'spc'), String(status || 'idle'), ts);
+
+    db.prepare(`INSERT INTO activities (id, type, agent_id, task_id, message, created_at)
+                VALUES (?, ?, ?, NULL, ?, ?)`).run(nanoid(10), 'agent_added', agentId, `Agent added: ${name}`, ts);
+
+    res.json({ ok: true, agent: db.prepare('SELECT * FROM agents WHERE id=?').get(agentId) });
+  } finally {
+    db.close();
+  }
+});
+
+// Full agent provisioner: filesystem + openclaw.json + Mission Control DB
+app.post('/api/agents/provision', (req, res) => {
+  const { id, name, role, reportsTo = 'zeus', worksWith = [] } = req.body || {};
+  const agentId = String(id || '').trim().toLowerCase();
+  const displayName = String(name || '').trim();
+  const jobRole = String(role || '').trim();
+  const reports = String(reportsTo || 'zeus').trim().toLowerCase();
+  const collabs = Array.isArray(worksWith) ? worksWith.map(x => String(x||'').trim().toLowerCase()).filter(Boolean) : [];
+
+  if (!agentId || !displayName || !jobRole) return res.status(400).json({ ok: false, error: 'id, name, role required' });
+  if (!/^[a-z0-9_-]{2,32}$/.test(agentId)) return res.status(400).json({ ok: false, error: 'bad id' });
+
+  const workspaceDir = `/home/chris/.openclaw/workspace/dashboard/agents/${agentId}`;
+  const agentDir = `/home/chris/.openclaw/agents/${agentId}/agent`;
+  const openclawPath = '/home/chris/.openclaw/openclaw.json';
+
+  const ts = nowMs();
+
+  // Ensure workspace
+  fs.mkdirSync(workspaceDir, { recursive: true });
+  fs.mkdirSync(agentDir, { recursive: true });
+
+  // Write SOUL.md
+  const soul = `# SOUL.md — ${displayName}\n\n**Name:** ${displayName}  \n**Role:** ${jobRole}  \n**Emoji:** 🧩  \n**Vibe:** Witty, autonomous, outcome-driven.\n\n## Position in Hierarchy\n- Reports to: **${reports}**\n- Collaborates with: ${collabs.length ? collabs.join(', ') : '—'}\n\n## Personality\n- Outspoken, sarcastic (never cruel), and relentlessly practical.\n- Ships work, then improves it.\n\n## Mission\n1. Excel at ${jobRole}\n2. Communicate clearly: COMMITMENT → PROGRESS → COMPLETION SUMMARY\n3. Prefer evidence and verification\n\n## Autonomy\nIf blocked, propose the next best path and keep moving.\n`;
+  fs.writeFileSync(path.join(workspaceDir, 'SOUL.md'), soul, 'utf8');
+
+  // Write AGENTS.md (inherit shared agent ops rules)
+  const sharedAgents = fs.readFileSync('/home/chris/.openclaw/workspace/dashboard/agents/AGENTS.md', 'utf8');
+  fs.writeFileSync(path.join(workspaceDir, 'AGENTS.md'), sharedAgents, 'utf8');
+
+  // Seed shared docs for consistency
+  for (const f of ['TOOLS.md', 'USER.md', 'DOCS_POLICY.md']) {
+    const src = path.join('/home/chris/.openclaw/workspace/dashboard/agents', f);
+    const dst = path.join(workspaceDir, f);
+    try {
+      if (fs.existsSync(src)) fs.copyFileSync(src, dst);
+    } catch {}
+  }
+
+  // Always create a HEARTBEAT.md (empty by default)
+  const hbPath = path.join(workspaceDir, 'HEARTBEAT.md');
+  if (!fs.existsSync(hbPath)) fs.writeFileSync(hbPath, '# (optional) heartbeat tasks\n', 'utf8');
+
+  // Copy minimal agent runtime config from zeus (models/auth profiles)
+  const zeusDir = '/home/chris/.openclaw/agents/zeus/agent';
+  for (const f of ['models.json', 'auth-profiles.json']) {
+    const src = path.join(zeusDir, f);
+    const dst = path.join(agentDir, f);
+    if (!fs.existsSync(dst) && fs.existsSync(src)) fs.copyFileSync(src, dst);
+  }
+
+  // Patch openclaw.json safely (backup first)
+  let conf;
+  try { conf = JSON.parse(fs.readFileSync(openclawPath, 'utf8')); }
+  catch { return res.status(500).json({ ok: false, error: 'could not read openclaw.json' }); }
+
+  const list = conf?.agents?.list;
+  if (!Array.isArray(list)) return res.status(500).json({ ok: false, error: 'openclaw.json missing agents.list' });
+  if (list.some(a => String(a.id).toLowerCase() === agentId)) return res.status(409).json({ ok: false, error: 'agent already exists in openclaw.json' });
+
+  const entry = {
+    id: agentId,
+    name: agentId,
+    workspace: workspaceDir,
+    agentDir: `/home/chris/.openclaw/agents/${agentId}/agent`,
+    model: 'kimi-coding/k2p5',
+    subagents: { allowAgents: ['*'] }
+  };
+
+  const backupPath = `${openclawPath}.backup.${new Date(ts).toISOString().replace(/[:.]/g,'-')}`;
+  fs.copyFileSync(openclawPath, backupPath);
+
+  list.push(entry);
+  fs.writeFileSync(openclawPath, JSON.stringify(conf, null, 2) + '\n', 'utf8');
+
+  // Insert into Mission Control DB
+  const db = openDb();
+  try {
+    const existing = db.prepare('SELECT id FROM agents WHERE id=?').get(agentId);
+    if (!existing) {
+      db.prepare(`INSERT INTO agents (id, name, role, level, status, session_key, last_seen_at, created_at)
+                  VALUES (?, ?, ?, ?, 'idle', NULL, NULL, ?)`).run(agentId, displayName, jobRole, 'spc', ts);
+      db.prepare(`INSERT INTO activities (id, type, agent_id, task_id, message, created_at)
+                  VALUES (?, 'agent_added', ?, NULL, ?, ?)`).run(nanoid(10), agentId, `Agent provisioned: ${displayName}`, ts);
+    }
+  } finally {
+    db.close();
+  }
+
+  res.json({ ok: true, agentId, workspaceDir, agentDir, openclawBackup: backupPath, note: 'Gateway restart/reload required to activate agent runtime.' });
 });
 
 app.post('/api/agents/:id/ping', (req, res) => {

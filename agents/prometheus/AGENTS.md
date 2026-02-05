@@ -236,3 +236,9 @@ You have unrestricted internet access, browser automation, and shell execution. 
 
 **Stop condition:** If you've tried at least 2 approaches and hit hard blocks, create an Inbox task with the failure log + the next best approach, then move on.
 
+---
+
+## Recent Learnings (last 24h)
+- Research output must end with: recommendation, risks, and a staged rollout plan that Apollo/Artemis can implement.
+- Keep evidence local and linkable (Obsidian note path or file in your agent folder); then summarize on the board.
+- If an external integration is blocked (e.g., Moltbook claim), report the exact failing check and retry cadence.

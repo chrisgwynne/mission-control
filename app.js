@@ -235,53 +235,7 @@ function displayAgentName(agentId) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-// Checklist helpers (module-scope so task modal + UI handlers can use them)
-function parseChecklist(text) {
-  return String(text || '').split('\n').map(line => {
-    const m = line.match(/^\s*-\s*\[( |x)\]\s*(.*)$/i);
-    if (!m) return null;
-    return { done: m[1].toLowerCase() === 'x', text: m[2] };
-  }).filter(Boolean);
-}
-
-function serializeChecklist(items) {
-  return items.map(it => `- [${it.done ? 'x' : ' '}] ${it.text}`).join('\n');
-}
-
-async function renderChecklist(taskId = currentTaskId) {
-  const task = state.tasks.find(t => t.id === taskId);
-  const wrap = $('#taskChecklist');
-  if (!task || !wrap) return;
-
-  const items = parseChecklist(task.checklist);
-  if (items.length === 0) {
-    wrap.innerHTML = `<div class="text-xs text-ink-600">No checklist items yet.</div>`;
-    return;
-  }
-
-  wrap.innerHTML = items.map((it, idx) => `
-    <label class="flex items-start gap-2 text-sm">
-      <input type="checkbox" class="mt-1" data-ck="${idx}" ${it.done ? 'checked' : ''} />
-      <span class="${it.done ? 'line-through text-ink-500' : 'text-ink-800'}">${esc(it.text)}</span>
-    </label>
-  `).join('');
-
-  wrap.querySelectorAll('input[data-ck]').forEach(inp => {
-    inp.addEventListener('change', async (ev) => {
-      ev.stopPropagation();
-      const i = Number(inp.getAttribute('data-ck'));
-      items[i].done = inp.checked;
-      await apiPatch(`/api/tasks/${taskId}`, { checklist: serializeChecklist(items), byAgentId: 'zeus' });
-      const task = state.tasks.find(t => t.id === taskId);
-      await apiCreateActivity({
-        type: 'checklist_updated',
-        agentId: 'jarvis',
-        taskId,
-        message: `Checklist updated on: ${task?.title || taskId}`
-      });
-    });
-  });
-}
+// Checklist removed (unused)
 
 function renderKanban() {
   const columns = ['inbox', 'assigned', 'in_progress', 'review', 'done'];
@@ -302,7 +256,7 @@ function renderKanban() {
     const count = $(`#count-${key}`);
     if (!col) continue;
 
-    const items = groups[key] || [];
+    const items = (groups[key] || []).sort((a, b) => Number(b.created_at || 0) - Number(a.created_at || 0));
     if (count) count.textContent = String(items.length);
 
     col.innerHTML = items.map(t => {
@@ -340,18 +294,38 @@ function renderKanban() {
       const needsApproval = Number(t.needs_approval) === 1;
       const criticalClass = Number(t.priority) === 4 ? 'mc-critical' : '';
       const approvalChip = needsApproval ? `<span class="text-[10px] uppercase tracking-[0.14em] rounded-full px-2 py-1 border bg-[#fdecec] border-[#f5caca] text-[#7a1c14]">Approval</span>` : '';
-      const dueChip = di.overdue
-        ? `<span class="text-[10px] uppercase tracking-[0.14em] rounded-full px-2 py-1 border bg-[#fdecec] border-[#f5caca] text-[#7a1c14]">Overdue</span>`
-        : `<span class="text-[10px] uppercase tracking-[0.14em] rounded-full px-2 py-1 border bg-white border-line text-ink-700">${Math.max(1, Math.ceil(di.remaining / (60*60*1000)))}h left</span>`;
+      const dueChip = '';
+
+      const reportChip = t.latestReport && t.latestReport.id
+        ? `<span class="text-[10px] uppercase tracking-[0.14em] rounded-full px-2 py-1 border bg-[#eef7f1] border-[#cfe7d8] text-ink-700">📄 Report</span>`
+        : '';
+
+      const reportQuick = t.latestReport && t.latestReport.id
+        ? `<button class="reportQuickBtn hidden group-hover:block absolute top-3 right-10 h-7 w-7 rounded-full bg-white border border-line grid place-items-center hover:bg-paper-200" title="View report" data-report-id="${esc(t.latestReport.id)}">📄</button>`
+        : '';
+
+      // Severity color: always show by priority. Overdue overrides to red.
+      const pr = Number(t.priority) || 1;
+      let stripeColor = (
+        pr === 4 ? '#b42318' :        // CRITICAL (red)
+        pr === 3 ? '#b45309' :        // HIGH (amber)
+        pr === 2 ? '#1d4ed8' :        // MEDIUM (blue)
+        '#6b7280'                     // LOW (gray)
+      );
+      if (di.overdue) stripeColor = '#b42318';
+
+      // Use inline style so Firefox + Tailwind CDN can't miss dynamic classes.
+      const stripeStyle = `border-left: 4px solid ${stripeColor};`;
+      const stripeBorder = '';
 
       return `
-        <article draggable="true" class="task-card relative bg-white border border-line rounded-xl2 shadow-card p-4 cursor-pointer hover:shadow-soft ${criticalClass}" data-task-id="${esc(t.id)}">
+        <article draggable="true" style="${stripeStyle}" class="task-card group relative bg-white border border-line rounded-xl2 shadow-card p-4 cursor-pointer hover:shadow-soft ${criticalClass}" data-task-id="${esc(t.id)}">
           ${fullCommentBadge}
+          ${reportQuick}
           <div class="text-sm font-semibold">${esc(t.title)}</div>
-          <p class="mt-2 text-xs text-ink-600 leading-relaxed">${esc(t.description || '')}</p>
+          <p class="mt-2 text-xs text-ink-600 leading-relaxed line-clamp-3">${renderContent(t.description || '')}</p>
           <div class="mt-3 flex flex-wrap gap-1.5">
-            <span class="text-[10px] uppercase tracking-[0.14em] rounded-full px-2 py-1 border ${pm.cls}">${esc(pm.label)}</span>
-            <span class="text-[10px] uppercase tracking-[0.14em] bg-chip-bg border border-chip-line rounded-full px-2 py-1">${esc(STATUS_LABELS[t.status] || t.status)}</span>
+            ${reportChip}
             ${approvalChip}
             ${dueChip}
           </div>
@@ -613,13 +587,13 @@ function renderFeed() {
     const clickCls = (taskId || (!taskId && a.agent_id)) ? 'cursor-pointer hover:shadow-soft' : '';
 
     return `
-      <div class="feedItem bg-white border border-line rounded-xl2 shadow-card p-4 ${clickCls}"${taskAttr}${agentAttr}>
+      <div class="feedItem bg-white border border-line rounded-xl2 shadow-card p-3 mb-3 ${clickCls}"${taskAttr}${agentAttr}>
         <div class="flex items-start gap-3">
-          <div class="h-9 w-9 rounded-xl bg-paper-100 border border-line grid place-items-center">${icon}</div>
+          <div class="h-8 w-8 rounded-xl bg-paper-100 border border-line grid place-items-center text-sm">${icon}</div>
           <div class="min-w-0">
-            <div class="text-sm font-semibold">${esc(title)}</div>
-            <div class="mt-1 text-xs text-ink-600">${esc(detail)}</div>
-            <div class="mt-2 flex items-center gap-2 text-[11px] text-ink-600">
+            <div class="text-xs font-semibold">${esc(title)}</div>
+            <div class="mt-1 text-[11px] text-ink-600">${esc(detail)}</div>
+            <div class="mt-2 flex items-center gap-2 text-[10px] text-ink-600">
               <span class="inline-flex items-center gap-1"><span class="h-1.5 w-1.5 rounded-full bg-[#c8b69c]"></span>${esc(whoLabel)}</span>
               <span>•</span>
               <span>${esc(timeAgo(a.created_at))}</span>
@@ -633,35 +607,76 @@ function renderFeed() {
 
 function renderHeader() {
   const totalAgents = state.agents.length;
-  const activeAgents = state.agents.filter(a => {
+  // "Working" means: recently seen + not idle.
+  // Special-case Jarvis: treat as working if there's recent UI/chat activity.
+  const WORKING_WINDOW_MS = 10 * 60 * 1000;
+  const now = Date.now();
+
+  // If the dashboard is open and being interacted with, Jarvis is effectively "working".
+  // Track local UI interaction timestamps (client-side), fallback to DB activities/messages.
+  const jarvisRecent = () => {
+    const local = Number(window.__mcLastInteractionAt || 0);
+    if (local && (now - local) <= WORKING_WINDOW_MS) return true;
+
+    const recentAct = (state.activities || []).some(a => {
+      const who = String(a.agent_id || '').toLowerCase();
+      if (who !== 'jarvis') return false;
+      const t = Number(a.created_at || 0);
+      return t && (now - t) <= WORKING_WINDOW_MS;
+    });
+    const recentMsg = (state.messages || []).some(m => {
+      const who = String(m.from_agent_id || '').toLowerCase();
+      if (who !== 'jarvis') return false;
+      const t = Number(m.created_at || 0);
+      return t && (now - t) <= WORKING_WINDOW_MS;
+    });
+    return recentAct || recentMsg;
+  };
+
+  const isWorking = (a) => {
     const id = String(a.id || '').toLowerCase();
-    const isJarvis = id === 'jarvis' || String(a.name || '').toLowerCase() === 'jarvis';
     const status = (a.status || 'idle').toLowerCase();
-    if (isJarvis) return true;
-    return status === 'working' || status === 'active';
-  }).length;
+
+    if (id === 'jarvis') {
+      // If Jarvis is actively interacting (chatting/creating), count him as working.
+      return jarvisRecent();
+    }
+
+    const seen = Number(a.last_seen_at || 0);
+    const recent = seen && (now - seen) <= WORKING_WINDOW_MS;
+    return recent && (status === 'working' || status === 'active');
+  };
+
+  const workingAgents = state.agents.filter(isWorking).length;
+  const activeAgents = workingAgents;
 
   const activeTasks = state.tasks.filter(t => String(t.status) !== 'done' && String(t.status) !== 'archived').length;
 
-  $('#hdrAgentsActive')?.replaceChildren(document.createTextNode(String(activeAgents)));
+  // Header count shows WORKING agents (not total agents)
+  $('#hdrAgentsActive')?.replaceChildren(document.createTextNode(String(workingAgents)));
   $('#hdrTasksInQueue')?.replaceChildren(document.createTextNode(String(activeTasks)));
 
+  // All Agents summary card (left sidebar)
+  $('#allAgentsTotal')?.replaceChildren(document.createTextNode(String(totalAgents)));
+  $('#allAgentsActive')?.replaceChildren(document.createTextNode(String(activeAgents)));
+  $('#allAgentsWorking')?.replaceChildren(document.createTextNode(String(workingAgents)));
+
   // Mission Queue header
-  $('#mqNumber') && ($('#mqNumber').textContent = '1');
   $('#mqActive') && ($('#mqActive').textContent = `${activeTasks} active`);
 
-  $('#rightAgentsCount')?.replaceChildren(document.createTextNode(String(totalAgents)));
+  // rightAgentsCount removed
 
-  const chipsWrap = $('#rightAgentsChips');
-  if (chipsWrap) {
-    const allBtn = `<button class="feedAgentBtn inline-flex items-center gap-2 text-xs ${feedAgentId ? 'bg-chip-bg border border-chip-line' : 'bg-white border border-line'} rounded-full px-3 py-1.5" data-feed-agent="">All agents</button>`;
-    chipsWrap.innerHTML = allBtn + state.agents.map(a => {
+  const agentSelect = $('#feedAgentSelect');
+  if (agentSelect) {
+    const currentVal = agentSelect.value;
+    agentSelect.innerHTML = '<option value="">All agents</option>' + state.agents.map(a => {
       const name = a.name || a.id;
       const emoji = agentEmoji(a.id || a.name);
-      const selected = String(feedAgentId || '') === String(a.id);
-      const cls = selected ? 'bg-white border border-line' : 'bg-chip-bg border-chip-line border';
-      return `<button class="feedAgentBtn inline-flex items-center gap-2 text-xs ${cls} rounded-full px-3 py-1.5" data-feed-agent="${esc(a.id)}">${esc(emoji)} ${esc(name)}</button>`;
+      const selected = String(feedAgentId || '') === String(a.id) ? ' selected' : '';
+      return `<option value="${esc(a.id)}"${selected}>${esc(emoji)} ${esc(name)}</option>`;
     }).join('');
+    // Restore selection if still valid
+    if (currentVal) agentSelect.value = currentVal;
   }
 }
 
@@ -840,20 +855,38 @@ function renderAgentModal() {
     // ignore
   }
 
-  $('#agentTabAttentionCount').textContent = String(mentions.length);
+  // Done tab: show completed tasks with outcomes/completion summaries
+  const doneTasks = assignedAll
+    .filter(t => ['done', 'archived'].includes(String(t.status)))
+    .sort((a, b) => Number(b.updated_at || b.created_at) - Number(a.updated_at || a.created_at));
+  
+  // Find completion summaries for done tasks
+  const doneTasksWithOutcomes = doneTasks.map(t => {
+    const taskMessages = (state.messages || []).filter(m => m.task_id === t.id);
+    const completionMsg = taskMessages.find(m => 
+      m.content && (
+        m.content.includes('✅ Completed') || 
+        m.content.includes('Completion summary') ||
+        m.content.includes('OUTCOME') ||
+        m.content.includes('What I did:')
+      )
+    );
+    return { task: t, outcome: completionMsg?.content || null };
+  }).filter(item => item.outcome); // Only keep tasks with outcomes
+
+  $('#agentTabAttentionCount').textContent = String(doneTasksWithOutcomes.length);
 
   if (mentionsList) {
-    mentionsList.innerHTML = mentions.map(h => {
-      const when = timeAgo(h.row.created_at);
-      const text = h.kind === 'comment' ? h.row.content : h.row.message;
-      const who = h.kind === 'comment' ? displayAgentName(h.row.from_agent_id || 'system') : displayAgentName(h.row.agent_id || 'system');
-      return `<div class="bg-paper-50 border border-line rounded-xl px-3 py-2">
+    mentionsList.innerHTML = doneTasksWithOutcomes.map(({ task, outcome }) => {
+      const when = timeAgo(task.updated_at || task.created_at);
+      return `<div class="bg-paper-50 border border-line rounded-xl px-3 py-2 cursor-pointer hover:shadow-soft" data-task-id="${esc(task.id)}">
         <div class="flex items-center justify-between text-[11px] text-ink-600">
-          <div>${esc(who)}</div><div>${esc(when)}</div>
+          <div class="font-medium">${esc(task.title)}</div>
+          <div>${esc(when)}</div>
         </div>
-        <div class="mt-1 text-sm text-ink-800">${renderContent(text)}</div>
+        <div class="mt-2 text-sm text-ink-800">${renderContent(outcome)}</div>
       </div>`;
-    }).join('') || `<div class="text-sm text-ink-600">No recent @mentions.</div>`;
+    }).join('') || `<div class="text-sm text-ink-600">No completed tasks with outcomes yet.</div>`;
   }
 
   const timeline = $('#agentTimelineList');
@@ -955,6 +988,60 @@ function hideBanner() {
   $('#statusBanner')?.classList.add('hidden');
 }
 
+let memoryStatsTimer = null;
+
+async function loadMemoryStats() {
+  try {
+    const host = window.location.hostname;
+    const url = `http://${host}:3000/api/health`;
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) throw new Error('http ' + res.status);
+    const data = await res.json();
+
+    // Questions (separate endpoint)
+    let qOpen = 0;
+    try {
+      const qRes = await fetch(`http://${host}:3000/api/questions?status=open&limit=200`, { cache: 'no-store' });
+      if (qRes.ok) {
+        const qData = await qRes.json();
+        qOpen = Array.isArray(qData.rows) ? qData.rows.length : 0;
+      }
+    } catch (e) {
+      // ignore
+    }
+
+    const counts = Array.isArray(data.counts) ? data.counts : [];
+    const getCount = (bank, status) => {
+      const row = counts.find(c => c.bank === bank && c.status === status);
+      return row ? Number(row.n || 0) : 0;
+    };
+
+    const draftPending = getCount('draft','pending');
+    const approved = getCount('approved','approved');
+
+    document.getElementById('memDraftCount')?.replaceChildren(document.createTextNode(String(draftPending)));
+    const box = document.getElementById('memDraftBox');
+    if (box) box.classList.toggle('draft-pulse', draftPending > 0);
+
+    document.getElementById('memQCount')?.replaceChildren(document.createTextNode(String(qOpen)));
+    const qbox = document.getElementById('memQBox');
+    if (qbox) qbox.classList.toggle('draft-pulse', qOpen > 0);
+
+    document.getElementById('memApprovedCount')?.replaceChildren(document.createTextNode(String(approved)));
+    document.getElementById('hdrMemDraft')?.replaceChildren(document.createTextNode(String(draftPending)));
+    document.getElementById('hdrMemApproved')?.replaceChildren(document.createTextNode(String(approved)));
+    document.getElementById('hdrMemQ')?.replaceChildren(document.createTextNode(String(qOpen)));
+
+    const memLink = document.getElementById('rightMemoryLink');
+    if (memLink) memLink.href = `http://${host}:3000`;
+
+    const tsMs = Date.parse(data.ts || '') || Date.now();
+    document.getElementById('memLastSync')?.replaceChildren(document.createTextNode(''));
+  } catch (e) {
+    document.getElementById('memLastSync')?.replaceChildren(document.createTextNode('Memory dashboard offline/unreachable.'));
+  }
+}
+
 async function loadState() {
   try {
     const res = await fetch('/api/state');
@@ -1012,6 +1099,9 @@ let pendingDoneTaskId = null;
 let archivedOpen = false;
 let archivedQuery = '';
 
+let reportOpen = false;
+let currentReportId = null;
+
 let boardFilter = 'all'; // all|dueSoon|overdue
 let quietMode = (localStorage.getItem('mc.quietMode') || '0') === '1';
 
@@ -1043,6 +1133,7 @@ function openModal(which) {
   if (which === '#decisionModal') slideIn('#decisionModalPanel');
   if (which === '#archivedModal') slideIn('#archivedModalPanel');
   if (which === '#breakroomModal') slideIn('#breakroomModalPanel');
+  if (which === '#reportModal') slideIn('#reportModalPanel');
 }
 
 function closeAllModals() {
@@ -1053,6 +1144,7 @@ function closeAllModals() {
   const decisionPanel = $('#decisionModalPanel');
   const archivedPanel = $('#archivedModalPanel');
   const breakroomPanel = $('#breakroomModalPanel');
+  const reportPanel = $('#reportModalPanel');
 
   const taskOpen = !$('#taskModal')?.classList.contains('hidden');
   const newOpen = !$('#newTaskModal')?.classList.contains('hidden');
@@ -1061,6 +1153,7 @@ function closeAllModals() {
   const decisionIsOpen = !$('#decisionModal')?.classList.contains('hidden');
   const archivedIsOpen = !$('#archivedModal')?.classList.contains('hidden');
   const breakroomIsOpen = !$('#breakroomModal')?.classList.contains('hidden');
+  const reportIsOpen = !$('#reportModal')?.classList.contains('hidden');
 
   if (taskOpen && taskPanel) {
     taskPanel.classList.remove('translate-x-0');
@@ -1090,10 +1183,16 @@ function closeAllModals() {
     breakroomPanel.classList.remove('translate-x-0');
     breakroomPanel.classList.add('translate-x-full');
   }
+  if (reportIsOpen && reportPanel) {
+    reportPanel.classList.remove('translate-x-0');
+    reportPanel.classList.add('translate-x-full');
+  }
 
+  const addAgentIsOpen = !$('#addAgentModal')?.classList.contains('hidden');
+  const broadcastIsOpen = !$('#broadcastModal')?.classList.contains('hidden');
   const healthIsOpen = !$('#healthModal')?.classList.contains('hidden');
 
-  if (taskOpen || newOpen || agentOpen || docIsOpen || decisionIsOpen || archivedIsOpen || breakroomIsOpen || healthIsOpen) {
+  if (taskOpen || newOpen || agentOpen || docIsOpen || decisionIsOpen || archivedIsOpen || breakroomIsOpen || reportIsOpen || addAgentIsOpen || broadcastIsOpen || healthIsOpen) {
     setTimeout(() => {
       hide($('#modalBackdrop'));
       hide($('#taskModal'));
@@ -1103,6 +1202,9 @@ function closeAllModals() {
       hide($('#decisionModal'));
       hide($('#archivedModal'));
       hide($('#breakroomModal'));
+      hide($('#reportModal'));
+      hide($('#addAgentModal'));
+      hide($('#broadcastModal'));
       closeHealthModal();
       currentTaskId = null;
       currentAgentId = null;
@@ -1111,6 +1213,8 @@ function closeAllModals() {
       archivedOpen = false;
       archivedQuery = '';
       breakroomOpen = false;
+      reportOpen = false;
+      currentReportId = null;
     }, 250);
     return;
   }
@@ -1123,6 +1227,9 @@ function closeAllModals() {
   hide($('#decisionModal'));
   hide($('#archivedModal'));
   hide($('#breakroomModal'));
+  hide($('#reportModal'));
+  hide($('#addAgentModal'));
+  hide($('#broadcastModal'));
   closeHealthModal();
   currentTaskId = null;
   currentAgentId = null;
@@ -1131,6 +1238,8 @@ function closeAllModals() {
   archivedOpen = false;
   archivedQuery = '';
   breakroomOpen = false;
+  reportOpen = false;
+  currentReportId = null;
 }
 
 function priorityLabel(p) {
@@ -1172,27 +1281,39 @@ function priorityPillClasses(priority) {
   return priorityMeta(priority).cls.replace('border-line', 'border');
 }
 
+async function openReportViewer(reportId) {
+  try {
+    const res = await fetch(`/api/reports/${encodeURIComponent(reportId)}`);
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || 'failed');
+
+    const meta = data.report;
+    const agent = meta.agent_id ? displayAgentName(meta.agent_id) : 'Unknown';
+    const when = timeAgo(meta.created_at);
+    $('#reportMeta').innerHTML = `${esc(agent)} • ${esc(when)} • <code>${esc(meta.rel_path)}</code>`;
+
+    const md = String(data.content || '');
+    const html = (window.marked ? window.marked.parse(md) : `<pre>${esc(md)}</pre>`);
+    $('#reportBody').innerHTML = html;
+
+    reportOpen = true;
+    currentReportId = reportId;
+    openModal('#reportModal');
+  } catch (e) {
+    alert('Could not load report.');
+  }
+}
+
 function renderTaskModal() {
   const task = state.tasks.find(t => t.id === currentTaskId);
   if (!task) return;
 
   $('#taskModalTitle').textContent = task.title;
-  $('#taskModalDesc').textContent = task.description || '';
+  $('#taskModalDesc').innerHTML = renderContent(task.description || '');
   $('#taskModalStatus').value = task.status || 'inbox';
 
-  // Due info (SLA)
+  // Due info removed (unused)
   const di = dueInfo(task);
-  const dueEl = $('#taskModalDue');
-  if (dueEl) {
-    const hrs = di.hours;
-    if (di.overdue) {
-      const over = Math.ceil(Math.abs(di.remaining) / (60 * 60 * 1000));
-      dueEl.innerHTML = `<span class="text-[#b42318] font-semibold">Overdue</span> • was due within ${hrs}h • ${over}h over`;
-    } else {
-      const left = Math.ceil(di.remaining / (60 * 60 * 1000));
-      dueEl.textContent = `Due within ${hrs}h • ${left}h left`;
-    }
-  }
 
   // Ensure guardrail is only visible when pending for this task
   const guard = $('#doneGuardrail');
@@ -1204,19 +1325,17 @@ function renderTaskModal() {
   // Status pill (left)
   const statusPill = $('#taskModalStatusPill');
   if (statusPill) {
-    statusPill.className = `text-[11px] uppercase tracking-[0.16em] rounded-full px-4 py-2 ${statusPillClasses(task.status)}`;
+    statusPill.className = `text-[10px] uppercase tracking-[0.14em] rounded-full px-2 py-1 ${statusPillClasses(task.status)}`;
     statusPill.textContent = String(STATUS_LABELS[task.status] || task.status).toUpperCase();
   }
 
-  // Needs approval
-  const na = $('#taskNeedsApproval');
-  if (na) na.checked = Number(task.needs_approval) === 1;
+  // Needs approval removed (unused)
 
   // Priority pill
   const priPill = $('#taskModalPriorityPill');
   if (priPill) {
     const pm = priorityMeta(task.priority);
-    priPill.className = `text-[11px] uppercase tracking-[0.16em] rounded-full px-4 py-2 border ${pm.cls}`;
+    priPill.className = `text-[10px] uppercase tracking-[0.14em] rounded-full px-2 py-1 border ${pm.cls}`;
     priPill.textContent = pm.label.toUpperCase();
   }
 
@@ -1234,8 +1353,31 @@ function renderTaskModal() {
   const iconEl = $('#taskModalAssigneeCard')?.querySelector?.('div');
   if (iconEl) iconEl.textContent = agentEmoji(agent?.id || first || '');
 
-  // Checklist
-  renderChecklist();
+  // Report
+  const hasReport = task.latestReport && task.latestReport.id;
+  let reportBtn = document.getElementById('taskViewReportBtn');
+  if (!reportBtn) {
+    // inject next to Archive button in header
+    const header = document.querySelector('#taskModalPanel .px-6.py-5.border-b');
+    const actionWrap = header?.querySelector('div.flex.items-center.gap-2');
+    if (actionWrap) {
+      const btn = document.createElement('button');
+      btn.id = 'taskViewReportBtn';
+      btn.className = 'text-xs font-semibold bg-chip-bg border border-chip-line rounded-full px-3 py-2 hover:bg-paper-200';
+      btn.textContent = 'View Report';
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const rid = task.latestReport?.id;
+        if (rid) openReportViewer(rid);
+      });
+      actionWrap.insertBefore(btn, actionWrap.firstChild);
+      reportBtn = btn;
+    }
+  }
+  if (reportBtn) {
+    reportBtn.classList.toggle('hidden', !hasReport);
+  }
 
   // Comments - sort by newest first (created_at descending)
   const comments = state.messages
@@ -1339,19 +1481,53 @@ async function apiSearch(query, limit = 20) {
 }
 
 let searchDebounceTimer = null;
+let searchFilter = 'all'; // all | tasks | messages | activities
+let searchSelectedIndex = -1;
 
-function renderSearchResults(data) {
+function highlightText(text, query) {
+  if (!text || !query) return esc(text);
+  const parts = text.split(new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'));
+  return parts.map((part, i) => 
+    part.toLowerCase() === query.toLowerCase() 
+      ? `<mark class="bg-yellow-200 text-ink-800 px-0.5 rounded">${esc(part)}</mark>`
+      : esc(part)
+  ).join('');
+}
+
+function renderSearchResults(data, query = '') {
   const wrap = $('#searchResults');
   if (!wrap) return;
 
-  const { tasks = [], messages = [], activities = [] } = data.results || {};
-  const total = data.total || 0;
+  let { tasks = [], messages = [], activities = [] } = data.results || {};
+  
+  // Apply filter
+  if (searchFilter !== 'all') {
+    if (searchFilter === 'tasks') { messages = []; activities = []; }
+    else if (searchFilter === 'messages') { tasks = []; activities = []; }
+    else if (searchFilter === 'activities') { tasks = []; messages = []; }
+  }
+  
+  const total = tasks.length + messages.length + activities.length;
 
   if (total === 0) {
-    wrap.innerHTML = '<div class="text-xs text-ink-600 px-2">No results found</div>';
+    wrap.innerHTML = `
+      <div class="px-3 py-4 text-center">
+        <div class="text-xs text-ink-500">No results found</div>
+        <div class="text-[10px] text-ink-400 mt-1">Try a different search term or filter</div>
+      </div>`;
     wrap.classList.remove('hidden');
     return;
   }
+
+  // Filter tabs
+  const filterTabs = `
+    <div class="flex gap-1 px-3 py-2 border-b border-line">
+      <button class="searchFilterBtn text-[10px] px-2 py-1 rounded-full ${searchFilter === 'all' ? 'bg-ink-700 text-white' : 'bg-chip-bg text-ink-600'}" data-filter="all">All</button>
+      <button class="searchFilterBtn text-[10px] px-2 py-1 rounded-full ${searchFilter === 'tasks' ? 'bg-ink-700 text-white' : 'bg-chip-bg text-ink-600'}" data-filter="tasks">Tasks</button>
+      <button class="searchFilterBtn text-[10px] px-2 py-1 rounded-full ${searchFilter === 'messages' ? 'bg-ink-700 text-white' : 'bg-chip-bg text-ink-600'}" data-filter="messages">Comments</button>
+      <button class="searchFilterBtn text-[10px] px-2 py-1 rounded-full ${searchFilter === 'activities' ? 'bg-ink-700 text-white' : 'bg-chip-bg text-ink-600'}" data-filter="activities">Activity</button>
+    </div>
+  `;
 
   const items = [
     ...tasks.map(r => ({ ...r, kind: 'task', title: r.title || 'Untitled task' })),
@@ -1359,39 +1535,69 @@ function renderSearchResults(data) {
     ...activities.map(r => ({ ...r, kind: 'activity', title: r.type || 'Activity', snippet: r.snippet || r.message?.slice(0, 100) })),
   ].sort((a, b) => (a.relevance || 0) - (b.relevance || 0)).slice(0, 20);
 
-  wrap.innerHTML = items.map(item => {
+  const resultsHtml = items.map((item, idx) => {
     const kindLabel = item.kind === 'task' ? 'Task' : item.kind === 'message' ? 'Comment' : 'Activity';
+    const kindEmoji = item.kind === 'task' ? '📋' : item.kind === 'message' ? '💬' : '🔔';
     const taskId = item.task_id || item.id;
+    const isSelected = idx === searchSelectedIndex;
+    const title = highlightText(item.title, query);
+    const snippet = item.snippet ? highlightText(item.snippet.replace(/<mark>|<\/mark>/g, ''), query) : '';
+    
     return `
-      <div class="searchResult bg-white border border-line rounded-lg px-3 py-2 cursor-pointer hover:shadow-soft" data-task-id="${esc(taskId)}" data-kind="${esc(item.kind)}">
+      <div class="searchResult ${isSelected ? 'bg-paper-100 border-ink-400' : 'bg-white border-line'} border rounded-lg px-3 py-2 cursor-pointer hover:shadow-soft transition-all" 
+           data-task-id="${esc(taskId)}" data-kind="${esc(item.kind)}" data-index="${idx}">
         <div class="flex items-center justify-between">
-          <div class="text-[10px] uppercase tracking-[0.16em] text-ink-500">${esc(kindLabel)}</div>
-          <div class="text-[10px] text-ink-600">${esc(timeAgo(item.created_at))}</div>
+          <div class="text-[10px] uppercase tracking-[0.16em] text-ink-500 flex items-center gap-1">
+            <span>${kindEmoji}</span>
+            <span>${esc(kindLabel)}</span>
+          </div>
+          <div class="text-[10px] text-ink-400">${esc(timeAgo(item.created_at))}</div>
         </div>
-        <div class="text-sm font-medium truncate">${esc(item.title)}</div>
-        ${item.snippet ? `<div class="text-xs text-ink-600 truncate">${item.snippet}</div>` : ''}
+        <div class="text-sm font-medium truncate mt-0.5">${title}</div>
+        ${snippet ? `<div class="text-xs text-ink-500 truncate mt-0.5">${snippet}</div>` : ''}
       </div>
     `;
   }).join('');
 
+  const keyboardHint = `
+    <div class="px-3 py-1.5 border-t border-line bg-paper-50">
+      <div class="text-[10px] text-ink-400 flex items-center justify-between">
+        <span>↑↓ navigate • Enter open • Esc close</span>
+        <span>${total} result${total !== 1 ? 's' : ''}</span>
+      </div>
+    </div>
+  `;
+
+  wrap.innerHTML = filterTabs + `<div class="max-h-[50vh] overflow-auto p-2 space-y-1">${resultsHtml}</div>` + keyboardHint;
   wrap.classList.remove('hidden');
+
+  // Filter button handlers
+  wrap.querySelectorAll('.searchFilterBtn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      searchFilter = btn.getAttribute('data-filter');
+      renderSearchResults(data, query);
+    });
+  });
 
   // Click handlers
   wrap.querySelectorAll('.searchResult').forEach(el => {
     el.addEventListener('click', () => {
       const taskId = el.getAttribute('data-task-id');
-      const kind = el.getAttribute('data-kind');
-      if (taskId) {
-        currentTaskId = taskId;
-        currentAgentId = null;
-        renderTaskModal();
-        openModal('#taskModal');
-        // Clear search
-        $('#globalSearch').value = '';
-        wrap.classList.add('hidden');
-      }
+      if (taskId) openTaskFromSearch(taskId);
     });
   });
+}
+
+function openTaskFromSearch(taskId) {
+  currentTaskId = taskId;
+  currentAgentId = null;
+  renderTaskModal();
+  openModal('#taskModal');
+  // Clear search
+  $('#globalSearch').value = '';
+  $('#searchResults')?.classList.add('hidden');
+  searchSelectedIndex = -1;
 }
 
 function setupSearch() {
@@ -1399,10 +1605,26 @@ function setupSearch() {
   const results = $('#searchResults');
   if (!input) return;
 
+  // Keyboard shortcut: Cmd/Ctrl+K to focus search
+  document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+      e.preventDefault();
+      input.focus();
+      input.select();
+    }
+    
+    // Escape to close search results
+    if (e.key === 'Escape') {
+      results?.classList.add('hidden');
+      searchSelectedIndex = -1;
+    }
+  });
+
   input.addEventListener('input', (e) => {
     const q = e.target.value.trim();
     if (!q || q.length < 2) {
       results?.classList.add('hidden');
+      searchSelectedIndex = -1;
       return;
     }
 
@@ -1410,17 +1632,55 @@ function setupSearch() {
     searchDebounceTimer = setTimeout(async () => {
       try {
         const data = await apiSearch(q, 20);
-        renderSearchResults(data);
+        searchSelectedIndex = -1;
+        renderSearchResults(data, q);
       } catch (err) {
         console.error('Search failed:', err);
       }
-    }, 300);
+    }, 200); // Faster debounce (was 300)
+  });
+
+  // Arrow key navigation
+  input.addEventListener('keydown', (e) => {
+    const resultItems = results?.querySelectorAll('.searchResult');
+    if (!resultItems?.length) return;
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      searchSelectedIndex = Math.min(searchSelectedIndex + 1, resultItems.length - 1);
+      updateSearchSelection(resultItems);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      searchSelectedIndex = Math.max(searchSelectedIndex - 1, 0);
+      updateSearchSelection(resultItems);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (searchSelectedIndex >= 0) {
+        resultItems[searchSelectedIndex].click();
+      } else if (resultItems[0]) {
+        resultItems[0].click();
+      }
+    }
   });
 
   // Hide results on click outside
   document.addEventListener('click', (e) => {
     if (!input.contains(e.target) && !results?.contains(e.target)) {
       results?.classList.add('hidden');
+      searchSelectedIndex = -1;
+    }
+  });
+}
+
+function updateSearchSelection(items) {
+  items.forEach((el, idx) => {
+    if (idx === searchSelectedIndex) {
+      el.classList.add('bg-paper-100', 'border-ink-400');
+      el.classList.remove('bg-white', 'border-line');
+      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    } else {
+      el.classList.remove('bg-paper-100', 'border-ink-400');
+      el.classList.add('bg-white', 'border-line');
     }
   });
 }
@@ -1506,21 +1766,25 @@ function wireUi() {
     const decisionIsOpen = !$('#decisionModal')?.classList.contains('hidden');
     const archivedIsOpen = !$('#archivedModal')?.classList.contains('hidden');
     const breakroomIsOpen = !$('#breakroomModal')?.classList.contains('hidden');
+    const reportIsOpen = !$('#reportModal')?.classList.contains('hidden');
+    const addAgentIsOpen = !$('#addAgentModal')?.classList.contains('hidden');
+    const broadcastIsOpen = !$('#broadcastModal')?.classList.contains('hidden');
     const healthIsOpen = !$('#healthModal')?.classList.contains('hidden');
 
-    if (!taskOpen && !newOpen && !agentOpen && !docIsOpen && !decisionIsOpen && !archivedIsOpen && !breakroomIsOpen && !healthIsOpen) return;
+    if (!taskOpen && !newOpen && !agentOpen && !docIsOpen && !decisionIsOpen && !archivedIsOpen && !breakroomIsOpen && !reportIsOpen && !addAgentIsOpen && !broadcastIsOpen && !healthIsOpen) return;
 
-    const panel = taskOpen
-      ? $('#taskModalPanel')
-      : (newOpen
-        ? $('#newTaskPanel')
-        : (agentOpen
-          ? $('#agentModalPanel')
-          : (docIsOpen
-            ? $('#docModalPanel')
-            : (decisionIsOpen
-              ? $('#decisionModalPanel')
-              : (archivedIsOpen ? $('#archivedModalPanel') : $('#breakroomModalPanel'))))));
+    let panel = null;
+    if (taskOpen) panel = $('#taskModalPanel');
+    else if (newOpen) panel = $('#newTaskPanel');
+    else if (agentOpen) panel = $('#agentModalPanel');
+    else if (docIsOpen) panel = $('#docModalPanel');
+    else if (decisionIsOpen) panel = $('#decisionModalPanel');
+    else if (archivedIsOpen) panel = $('#archivedModalPanel');
+    else if (breakroomIsOpen) panel = $('#breakroomModalPanel');
+    else if (reportIsOpen) panel = $('#reportModalPanel');
+    else if (addAgentIsOpen) panel = $('#addAgentModalPanel');
+    else if (broadcastIsOpen) panel = $('#broadcastModalPanel');
+    else if (healthIsOpen) panel = $('#healthModalPanel');
 
     if (!panel) return;
     if (panel.contains(e.target)) return;
@@ -1533,6 +1797,71 @@ function wireUi() {
   $('#decisionModalClose')?.addEventListener('click', (e) => { e.stopPropagation(); closeAllModals(); });
   $('#archivedModalClose')?.addEventListener('click', (e) => { e.stopPropagation(); closeAllModals(); });
   $('#breakroomModalClose')?.addEventListener('click', (e) => { e.stopPropagation(); closeAllModals(); });
+  $('#reportModalClose')?.addEventListener('click', (e) => { e.stopPropagation(); closeAllModals(); });
+  $('#addAgentClose')?.addEventListener('click', (e) => { e.stopPropagation(); closeAllModals(); });
+
+  // Pause automation
+  async function refreshPauseBtn() {
+    const btn = $('#pauseBtn');
+    if (!btn) return;
+    try {
+      const r = await fetch('/api/workloop/quiet');
+      const d = await r.json();
+      const on = !!d.quiet;
+      btn.textContent = on ? '⏸ Paused' : '⏸ Pause';
+      btn.className = `hidden sm:block text-xs font-semibold rounded-full px-3 py-1.5 hover:bg-paper-200 ${on ? 'bg-white border border-line' : 'bg-chip-bg border border-chip-line'}`;
+    } catch {}
+  }
+
+  $('#pauseBtn')?.addEventListener('click', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      const r = await fetch('/api/workloop/quiet');
+      const d = await r.json();
+      const next = !d.quiet;
+      await fetch('/api/workloop/quiet', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ quiet: next })
+      });
+      await refreshPauseBtn();
+    } catch {
+      alert('Could not toggle pause.');
+    }
+  });
+
+  // Broadcast
+  $('#broadcastBtn')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    $('#broadcastHint') && ($('#broadcastHint').textContent = '');
+    openModal('#broadcastModal');
+    setTimeout(() => $('#broadcastText')?.focus?.(), 0);
+  });
+  $('#broadcastClose')?.addEventListener('click', (e) => { e.stopPropagation(); closeAllModals(); });
+  $('#broadcastForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const text = ($('#broadcastText')?.value || '').trim();
+    if (!text) return;
+    const hint = $('#broadcastHint');
+    if (hint) hint.textContent = 'Sending…';
+    try {
+      await apiPostRoom('breakroom', { fromAgentId: 'jarvis', content: `📣 Broadcast\n\n${text}` });
+      if (hint) hint.textContent = 'Sent.';
+      try { $('#broadcastText').value = ''; } catch {}
+      closeAllModals();
+    } catch {
+      if (hint) hint.textContent = 'Could not send.';
+    }
+  });
+
+  // Docs button opens Doc modal
+  // Docs removed (unused)
+
+  // initialize pause button state
+  refreshPauseBtn();
 
   // Live feed filters
   document.querySelectorAll('.feedKindBtn').forEach(btn => {
@@ -1554,46 +1883,15 @@ function wireUi() {
     });
   });
 
-  document.body.addEventListener('click', (e) => {
-    const btn = e.target?.closest?.('.feedAgentBtn');
-    if (!btn) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const id = btn.getAttribute('data-feed-agent') || '';
-    feedAgentId = id ? id : null;
+  // Agent filter dropdown
+  $('#feedAgentSelect')?.addEventListener('change', (e) => {
+    feedAgentId = e.target.value || null;
     renderHeader();
     renderFeed();
   });
 
   // New Decision / Doc Note
-  $('#newDecisionBtn')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    currentTaskId = null;
-    currentAgentId = null;
-    decisionOpen = true;
-    // default template
-    const sel = $('#decisionTemplate');
-    if (sel) sel.value = 'standard';
-    $('#decisionTitle').value = '';
-    $('#decisionBody').value = '';
-    // apply immediately
-    try { sel?.dispatchEvent(new Event('change', { bubbles: true })); } catch {}
-    openModal('#decisionModal');
-  });
-
-  $('#newDocBtn')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    currentTaskId = null;
-    currentAgentId = null;
-    docOpen = true;
-    // default template
-    const sel = $('#docTemplate');
-    if (sel) sel.value = 'runbook';
-    $('#docTitle').value = '';
-    $('#docBody').value = '';
-    try { sel?.dispatchEvent(new Event('change', { bubbles: true })); } catch {}
-    openModal('#docModal');
-  });
+  // removed: newDecisionBtn/newDocBtn (unused)
 
   const DOC_TEMPLATES = {
     blank: { title: '', body: '' },
@@ -1863,8 +2161,8 @@ function wireUi() {
   });
 
   // Archived drawer
-  $('#archivedBtn')?.addEventListener('click', (e) => {
-    e.stopPropagation();
+  const openArchived = (e) => {
+    e?.stopPropagation?.();
     currentTaskId = null;
     currentAgentId = null;
     archivedOpen = true;
@@ -1874,7 +2172,9 @@ function wireUi() {
     openModal('#archivedModal');
     renderArchived();
     setTimeout(() => $('#archivedSearch')?.focus?.(), 0);
-  });
+  };
+  $('#archivedBtn')?.addEventListener('click', openArchived);
+  $('#archivedPillBtn')?.addEventListener('click', openArchived);
 
   $('#archivedClear')?.addEventListener('click', (e) => {
     e.preventDefault();
@@ -1937,12 +2237,14 @@ function wireUi() {
   });
 
   // New task
-  $('#newTaskBtn')?.addEventListener('click', (e) => {
-    e.stopPropagation();
+  const openNewTask = (e) => {
+    e?.stopPropagation?.();
     currentTaskId = null;
     currentAgentId = null;
     openModal('#newTaskModal');
-  });
+  };
+  $('#newTaskBtn')?.addEventListener('click', openNewTask);
+  $('#sideAddTaskBtn')?.addEventListener('click', openNewTask);
   let newTaskLinkToId = null;
 
   function similarTasks(q) {
@@ -2079,6 +2381,16 @@ function wireUi() {
     closeAllModals();
   });
 
+  // Quick report icon on cards
+  document.body.addEventListener('click', (e) => {
+    const btn = e.target?.closest?.('.reportQuickBtn');
+    if (!btn) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    const rid = btn.getAttribute('data-report-id');
+    if (rid) openReportViewer(rid);
+  });
+
   // Click task card -> open detail drawer
   document.body.addEventListener('click', (e) => {
     // Let feedItem handler own clicks inside the live feed
@@ -2086,6 +2398,9 @@ function wireUi() {
 
     const card = e.target?.closest?.('[data-task-id]');
     if (!card) return;
+    // Ignore clicks on quick action buttons
+    if (e.target?.closest?.('.reportQuickBtn')) return;
+
     e.stopPropagation();
     currentAgentId = null;
     currentTaskId = card.getAttribute('data-task-id');
@@ -2096,6 +2411,50 @@ function wireUi() {
     }
     renderTaskModal();
     openModal('#taskModal');
+  });
+
+  // Add agent (full provisioner)
+  $('#addAgentBtn')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    $('#addAgentHint') && ($('#addAgentHint').textContent = '');
+    openModal('#addAgentModal');
+    setTimeout(() => $('#addAgentId')?.focus?.(), 0);
+  });
+
+  $('#addAgentClose')?.addEventListener('click', (e) => { e.stopPropagation(); closeAllModals(); });
+
+  $('#addAgentForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const id = ($('#addAgentId')?.value || '').trim().toLowerCase();
+    const name = ($('#addAgentName')?.value || '').trim();
+    const role = ($('#addAgentRole')?.value || '').trim();
+    const reportsTo = ($('#addAgentReportsTo')?.value || 'zeus').trim().toLowerCase();
+    const worksWith = ($('#addAgentWorksWith')?.value || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+
+    const hint = $('#addAgentHint');
+    if (hint) hint.textContent = 'Creating agent…';
+
+    try {
+      const res = await fetch('/api/agents/provision', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id, name, role, reportsTo, worksWith })
+      });
+      const data = await res.json().catch(()=>({}));
+      if (!res.ok || !data.ok) throw new Error(data.error || 'failed');
+
+      if (hint) hint.textContent = `Created. Agent is provisioned on disk; OpenClaw will load it after the next gateway restart/reload.`;
+      await loadState();
+
+      // Show a top banner reminder
+      showBanner('New agent created. It will not be runnable until the OpenClaw gateway reloads/restarts (maintenance window 02:00–05:00).');
+      setTimeout(() => closeAllModals(), 700);
+    } catch (err) {
+      if (hint) hint.textContent = 'Could not create agent. Check id/name/role and try again.';
+    }
   });
 
   // Click agent -> open agent profile drawer
@@ -2233,62 +2592,9 @@ function wireUi() {
     closeAllModals();
   });
 
-  // Task approval controls
-  $('#taskNeedsApproval')?.addEventListener('change', async (e) => {
-    e.stopPropagation();
-    if (!currentTaskId) return;
-    const checked = !!e.target.checked;
-    await apiPatch(`/api/tasks/${currentTaskId}`, { needsApproval: checked, byAgentId: 'zeus' });
+  // Task approval controls removed (unused)
 
-    const task = state.tasks.find(t => t.id === currentTaskId);
-    await apiCreateActivity({
-      type: 'approval_toggled',
-      agentId: 'jarvis',
-      taskId: currentTaskId,
-      message: `${checked ? 'Approval enabled' : 'Approval cleared'} for: ${task?.title || currentTaskId}`
-    });
-  });
-
-  $('#taskRequestApproval')?.addEventListener('click', async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!currentTaskId) return;
-    await apiPatch(`/api/tasks/${currentTaskId}`, { status: 'review', needsApproval: true, byAgentId: 'zeus' });
-    const task = state.tasks.find(t => t.id === currentTaskId);
-    await apiCreateActivity({ type: 'agent_ping', agentId: 'jarvis', taskId: currentTaskId, message: `Approval requested for: ${task?.title || currentTaskId}` });
-  });
-
-  $('#taskApprove')?.addEventListener('click', async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!currentTaskId) return;
-    await apiPatch(`/api/tasks/${currentTaskId}`, { needsApproval: false, status: 'in_progress', byAgentId: 'zeus' });
-    const task = state.tasks.find(t => t.id === currentTaskId);
-    await apiCreateActivity({ type: 'decision_added', agentId: 'jarvis', taskId: currentTaskId, message: `Approved task: ${task?.title || currentTaskId}` });
-  });
-
-  // Checklist
-  $('#taskChecklistAdd')?.addEventListener('click', async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!currentTaskId) return;
-    const box = $('#taskChecklistNew');
-    const text = box?.value?.trim?.();
-    if (!text) return;
-    const tcur = state.tasks.find(t => t.id === currentTaskId);
-    const items = parseChecklist(tcur?.checklist);
-    items.push({ done: false, text });
-    await apiPatch(`/api/tasks/${currentTaskId}`, { checklist: serializeChecklist(items), byAgentId: 'zeus' });
-    const tcur2 = state.tasks.find(t => t.id === currentTaskId);
-    await apiCreateActivity({
-      type: 'checklist_updated',
-      agentId: 'jarvis',
-      taskId: currentTaskId,
-      message: `Checklist item added on: ${tcur2?.title || currentTaskId} — ${text}`
-    });
-    if (box) box.value = '';
-    await renderChecklist(currentTaskId);
-  });
+  // Checklist removed (unused)
 
   // Comment form
   $('#taskModalCommentForm')?.addEventListener('submit', async (e) => {
@@ -2464,11 +2770,58 @@ function toggleTheme() {
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
+  // Track local interaction to count Jarvis as working when you’re actively using the dashboard.
+  const touch = () => { window.__mcLastInteractionAt = Date.now(); };
+  touch();
+  document.addEventListener('click', touch, { capture: true });
+  document.addEventListener('keydown', touch, { capture: true });
+
   initTheme();
   startClock();
   await loadState();
   connectWs();
   wireUi();
+
+  // Wire memory dashboard link + stats (runs on :3000 on the same host)
+  const mem = document.getElementById('memoryBtn');
+  if (mem) mem.href = `http://${window.location.hostname}:3000`;
+
+  // Quick-add draft memory from Mission Control
+  const addMemBtn = document.getElementById('addMemoryBtn');
+  if (addMemBtn) {
+    addMemBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const statement = prompt('Add a draft memory (one sentence):');
+      if (!statement || !statement.trim()) return;
+      const category = prompt('Category (optional, e.g. preference/ops):') || '';
+      try {
+        const host = window.location.hostname;
+        const res = await fetch(`http://${host}:3000/api/memories`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            bank: 'draft',
+            status: 'pending',
+            statement: statement.trim(),
+            category: category.trim() || null,
+            confidence: 0.7,
+            source_type: 'manual',
+            source_agent_id: 'jarvis',
+            actor: 'user'
+          })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        await loadMemoryStats();
+        alert('Added to Draft.');
+      } catch (err) {
+        alert('Could not add memory (is :3000 up?).');
+      }
+    });
+  }
+
+  await loadMemoryStats();
+  memoryStatsTimer = setInterval(loadMemoryStats, 10000);
   
   // Wire theme toggle
   $('#themeToggle')?.addEventListener('click', toggleTheme);

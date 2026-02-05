@@ -1,10 +1,10 @@
 {
   "name": "dashboard",
   "version": "1.0.0",
-  "description": "This folder contains a single-file static HTML replica of the provided dashboard screenshot.",
+  "description": "Mission Control dashboard: real-time operator UI + SQLite backend for a multi-agent OpenClaw workplace.",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node --check server.js && node -c workloop.cjs && node -c breakroom-autopilot.cjs && node -c initiative-loop.cjs && node -c sentinel-loop.cjs && node -c gog-sentinel-loop.cjs",
     "dev": "node server.js",
     "start": "node server.js",
     "db:reset": "node scripts/db-reset.js",

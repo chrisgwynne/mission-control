@@ -1,0 +1,18 @@
+{
+  "mode": "full",
+  "set_at": "2026-02-05T14:15:00Z",
+  "operator": "chris",
+  "notes": "Chris explicitly requested full autonomy (B): flip the switch. Allow autonomous external side-effects.",
+  "guardrails": {
+    "maintenance_window": "02:00-05:00 Europe/London",
+    "no_file_deletion": true,
+    "email_delete_to_trash_only": true,
+    "max_auto_tasks_per_day": 50,
+    "max_unsolicited_breakroom_chain": 3
+  },
+  "external": {
+    "email": { "enabled": true, "allowlist": [], "default_behavior": "allowed_anything_goes" },
+    "twitter": { "enabled": true, "allowlist": [], "default_behavior": "allowed_anything_goes" },
+    "github": { "enabled": true, "repos_allowlist": ["openclaw/openclaw", "chrisgwynne/*"], "default_behavior": "allowed" }
+  }
+}

@@ -35,6 +35,11 @@ const MIN_UNSOLICITED_REPLY_MS = Number(process.env.BREAKROOM_MIN_UNSOLICITED_RE
 
 const INTEREST_SAMPLE_PROB = Number(process.env.BREAKROOM_INTEREST_SAMPLE_PROB || 0.15); // 15%
 
+// "Alive" mode — allow agent-to-agent conversation + periodic sparks.
+const MAX_AGENT_CHAIN = Number(process.env.BREAKROOM_MAX_AGENT_CHAIN || 3);
+const SPARK_INTERVAL_MS = Number(process.env.BREAKROOM_SPARK_INTERVAL_MS || 30 * 60 * 1000);
+const SPARK_PROB = Number(process.env.BREAKROOM_SPARK_PROB || 0.35); // 35% chance per interval
+
 function readState() {
   try {
     return JSON.parse(fs.readFileSync(STATE_PATH, 'utf8'));
@@ -94,15 +99,44 @@ function openclawAgentReply(agentId, prompt, timeoutSec = 120) {
   const out = execFileSync(OPENCLAW_BIN, ['agent', '--agent', agentId, '--message', prompt, '--json', '--timeout', String(timeoutSec)], { encoding: 'utf8' });
   const j = JSON.parse(out);
   const payload = j?.result?.payloads?.[0]?.text ?? '';
-  return String(payload || '').trim();
+  return sanitizeBreakroomReply(String(payload || '').trim());
+}
+
+function sanitizeBreakroomReply(text) {
+  const t = String(text || '').trim();
+  if (!t) return '';
+
+  // Block meta/internal planning. We only want the actual message.
+  const bad = [
+    /^the user wants/i,
+    /^since i'?m/i,
+    /^as an ai/i,
+    /i should (provide|reply|respond)/i,
+    /in the break room/i,
+    /no task admin/i,
+  ];
+  if (bad.some(re => re.test(t))) return '';
+
+  // Hard cap length
+  return t.slice(0, 600);
+}
+
+function agentChainLen(db) {
+  // Count how many consecutive agent messages appear at the tail of the room.
+  const tail = db.prepare('SELECT from_agent_id FROM room_messages WHERE room_id=? ORDER BY created_at DESC LIMIT 12').all(ROOM_ID);
+  const agentIds = new Set(['zeus','hermes','apollo','artemis','ares','prometheus']);
+  let n = 0;
+  for (const r of tail) {
+    const who = String(r.from_agent_id || '').toLowerCase();
+    if (!agentIds.has(who)) break;
+    n++;
+  }
+  return n;
 }
 
 function shouldSkipPingPong(db) {
-  const last = db.prepare('SELECT from_agent_id, content, created_at FROM room_messages WHERE room_id=? ORDER BY created_at DESC LIMIT 1').get(ROOM_ID);
-  if (!last) return false;
-  const who = String(last.from_agent_id || '').toLowerCase();
-  // Treat JARVIS as the human proxy; only avoid ping-pong when another agent was last.
-  return ['zeus','hermes','apollo','artemis','ares','prometheus'].includes(who);
+  // Instead of blocking all agent->agent conversation, cap the chain length.
+  return agentChainLen(db) >= MAX_AGENT_CHAIN;
 }
 
 function canUnsolicited(agentId, st, now) {
@@ -147,7 +181,50 @@ async function tick() {
       'SELECT id, room_id, from_agent_id, content, created_at FROM room_messages WHERE room_id=? AND created_at > ? ORDER BY created_at ASC'
     ).all(ROOM_ID, since);
 
-    if (!newMsgs.length) return;
+    if (!newMsgs.length) {
+      // No new messages: maybe spark a conversation to keep the room alive.
+      const now = nowMs();
+      st.lastSparkAt = Number(st.lastSparkAt || 0);
+      const chain = agentChainLen(db);
+
+      if ((now - st.lastSparkAt) >= SPARK_INTERVAL_MS && chain === 0 && Math.random() < SPARK_PROB) {
+        const agentIds = ['zeus','hermes','apollo','artemis','ares','prometheus'];
+        const agentId = agentIds[Math.floor(Math.random() * agentIds.length)];
+
+        const seedTopics = [
+          'a weird/funny thing you learned today',
+          'a strong opinion about tools, programming, or AI agents',
+          'a random useful internet discovery',
+          'a thought experiment about autonomy vs safety',
+          'a quick movie/game recommendation (one line)',
+          'an interesting tech headline summary (no doom)',
+          'a contrarian take on productivity',
+        ];
+        const topic = seedTopics[Math.floor(Math.random() * seedTopics.length)];
+
+        const prompt = [
+          `You are ${agentId.toUpperCase()} in the break room.`,
+          `Start a short watercooler topic (1-2 sentences) about ${topic}.`,
+          `Keep it natural and human. No system status updates. No task admin.`,
+          `You MAY @mention another agent to pull them in.`,
+          `Do NOT mention the user unless necessary.`,
+          `Do NOT ask more than one question.`,
+        ].join('\n');
+
+        let post = '';
+        try { post = openclawAgentReply(agentId, prompt, 120); } catch { post = ''; }
+        if (post && post !== 'NO_REPLY') {
+          try {
+            await postToRoom(agentId, post);
+            st.lastSparkAt = now;
+            writeState(st);
+            console.log(`[spark] ${agentId}: ${post.slice(0, 80)}`);
+          } catch {}
+        }
+      }
+
+      return;
+    }
 
     console.log(`[tick] newMsgs=${newMsgs.length} since=${since}`);
 
@@ -192,10 +269,11 @@ async function tick() {
       if (String(lastMsg.from_agent_id || '').toLowerCase() === agentId) continue;
 
       const prompt = [
-        `You are ${agentId.toUpperCase()} in the Mission Control break room.`,
+        `You are ${agentId.toUpperCase()} in the break room.`,
         `You were @mentioned. Reply once, briefly (1-4 sentences).`,
+        `Output ONLY the message you would post. No analysis, no preface.`,
         `Do NOT spam. Do NOT start long debates.`,
-        `If the mention doesn't require a response, reply with a short acknowledgement and stop.`,
+        `If the mention doesn't require a response, respond with exactly: NO_REPLY`,
         `\nRecent chat:\n${contextText}`,
       ].join('\n');
 
@@ -222,12 +300,12 @@ async function tick() {
     if (repliesLeft <= 0) return;
 
     // 2) General talk: interest aligned sampling
-    const lastHumanMsg = newMsgs[newMsgs.length - 1];
-    const from = String(lastHumanMsg.from_agent_id || '').toLowerCase();
-    if (agentIds.includes(from)) return; // no responding to agent->agent without human/mention
-    // JARVIS is treated as the human proxy, so allow.
+    const lastMsg = newMsgs[newMsgs.length - 1];
+    const from = String(lastMsg.from_agent_id || '').toLowerCase();
+    // Alive mode: allow agent->agent chatter, but cap chain length.
+    if (agentChainLen(db) >= MAX_AGENT_CHAIN) return;
 
-    const interestAgents = pickAgentsByInterest(lastHumanMsg.content);
+    const interestAgents = pickAgentsByInterest(lastMsg.content);
     if (!interestAgents.length) return;
 
     for (const agentId of interestAgents) {
@@ -237,8 +315,9 @@ async function tick() {
       if (Math.random() > INTEREST_SAMPLE_PROB) continue;
 
       const prompt = [
-        `You are ${agentId.toUpperCase()} in the Mission Control break room.`,
-        `This is general chat (no direct @mention). Only respond if you have a genuinely helpful or interesting contribution.`,
+        `You are ${agentId.toUpperCase()} in the break room.`,
+        `This is general chat (no direct @mention). Only respond if you have a genuinely interesting contribution.`,
+        `Output ONLY the message you would post. No analysis, no preface.`,
         `Reply in 1-3 sentences. Avoid back-and-forth; do not ask more than one question.`,
         `If you have nothing strong to add, respond with exactly: NO_REPLY`,
         `\nRecent chat:\n${contextText}`,

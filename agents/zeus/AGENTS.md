@@ -260,3 +260,9 @@ Use this mode when proposing new work or assigning a multi-step initiative.
 
 This guides *decision-making*. It does not forbid implementation—specialists still ship.
 
+---
+
+## Recent Learnings (last 24h)
+- Treat HR tasks (HR Review / Weekly Report) as urgent operations work: assign to Zeus and act (rebalance/coaching).
+- If a mention/queue item keeps failing, don’t brute-force—create a task with the error + apply backoff.
+- Always leave a short assignment comment explaining *why* an agent was chosen and what “done” looks like.

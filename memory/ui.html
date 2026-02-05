@@ -1,0 +1,499 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Memory Bank — Mission Control</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            paper: { 50:'#faf9f7', 100:'#f6f3ef', 200:'#efe9e1' },
+            ink: { 600:'#5b5b5b', 700:'#3f3f3f', 800:'#2a2a2a' },
+            line: '#e7e1d8',
+            chip: { bg:'#f3efe9', line:'#e6ded3' },
+          },
+          boxShadow: {
+            soft: '0 10px 25px rgba(31, 41, 55, 0.08)',
+            card: '0 8px 18px rgba(31, 41, 55, 0.08)',
+          },
+          borderRadius: { xl2: '1.1rem' }
+        }
+      }
+    }
+  </script>
+  <style>
+    :root { color-scheme: light; }
+    html, body { height: 100vh; overflow: hidden; }
+    #app { height: 100vh; display:flex; flex-direction:column; }
+    main { flex: 1; overflow: hidden; min-height: 0; }
+    .scrollable { overflow-y:auto; scrollbar-width: thin; scrollbar-color: #c8b69c transparent; }
+    .scrollable::-webkit-scrollbar { width: 6px; }
+    .scrollable::-webkit-scrollbar-thumb { background-color:#c8b69c; border-radius:3px; }
+
+    /* Dark mode (match Mission Control) */
+    .dark body { background: #1f1c19 !important; color: #f5f2ee !important; }
+    .dark .bg-paper-100 { background-color: #1f1c19 !important; }
+    .dark .bg-paper-50 { background-color: #2a2622 !important; }
+    .dark .bg-white { background-color: #2a2622 !important; }
+    .dark .border-line { border-color: #3a342f !important; }
+    .dark .text-ink-800, .dark .text-ink-700 { color: #f5f2ee !important; }
+    .dark .text-ink-600 { color: #c4beb6 !important; }
+
+    /* header-specific fixes */
+    .dark header.bg-paper-50\/90 { background-color: rgba(42, 38, 34, 0.90) !important; }
+    .dark header .bg-paper-50\/90 { background-color: rgba(42, 38, 34, 0.90) !important; }
+    .dark header .tracking-\[0\.16em\].text-ink-800 { color: #f5f2ee !important; }
+    .dark header .bg-\[\#eef7f1\] { background-color: rgba(50, 168, 82, 0.16) !important; }
+    .dark header .border-\[\#cfe7d8\] { border-color: rgba(50, 168, 82, 0.30) !important; }
+
+    /* chips/buttons */
+    .dark .bg-chip-bg { background-color: #3a342f !important; }
+    .dark .border-chip-line { border-color: #4a443e !important; }
+    .dark .hover\:bg-paper-200:hover { background-color: #3a342f !important; }
+
+    /* inputs */
+    .dark input, .dark textarea { background-color: #1f1c19 !important; color: #f5f2ee !important; border-color: #3a342f !important; }
+    .dark input::placeholder, .dark textarea::placeholder { color: #9a948c !important; }
+
+    /* shadows */
+    .dark .shadow-soft { box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4) !important; }
+    .dark .shadow-card { box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35) !important; }
+
+    /* confidence stripes remain visible */
+    .dark .bg-\[\#32a852\] { background-color: #32a852 !important; }
+    .dark .bg-\[\#f59e0b\] { background-color: #f59e0b !important; }
+    .dark .bg-\[\#ef4444\] { background-color: #ef4444 !important; }
+  </style>
+</head>
+<body class="bg-paper-100 text-ink-800">
+<div id="app" class="min-h-screen">
+
+  <!-- Top bar (match Mission Control) -->
+  <header class="sticky top-0 z-20 bg-paper-50/90 backdrop-blur border-b border-line">
+    <div class="w-full px-6">
+      <div class="h-16 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="h-7 w-7 rounded-xl border border-line bg-white shadow-sm grid place-items-center text-base">🧠</div>
+          <div class="flex items-baseline gap-3">
+            <div class="tracking-[0.16em] text-xs font-semibold text-ink-800">MEMORY BANK</div>
+            <span class="text-[10px] tracking-[0.18em] uppercase text-ink-600 bg-chip-bg border border-chip-line rounded-full px-2 py-1">Dual-bank</span>
+          </div>
+        </div>
+
+        <div class="header-stats hidden md:flex items-center gap-10">
+          <div class="text-center">
+            <div id="hdrDraft" class="text-lg font-semibold leading-none">0</div>
+            <div class="text-[10px] tracking-[0.22em] uppercase text-ink-600">Draft</div>
+          </div>
+          <div class="text-center">
+            <div id="hdrApproved" class="text-lg font-semibold leading-none">0</div>
+            <div class="text-[10px] tracking-[0.22em] uppercase text-ink-600">Approved</div>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <input id="q" type="text" placeholder="Search statements, categories…" class="hidden sm:block text-xs bg-white border border-line rounded-full px-3 py-2 focus:outline-none focus:border-ink-600" />
+          <button id="refresh" class="hidden sm:block text-xs font-semibold bg-white border border-line rounded-full px-3 py-1.5 hover:bg-paper-200">Refresh</button>
+          <a id="mcLink" href="http://127.0.0.1:5173" class="hidden sm:block text-xs font-semibold bg-chip-bg border border-chip-line rounded-full px-3 py-1.5 hover:bg-paper-200" title="Back to Mission Control">🚀 Mission Control</a>
+          <div id="hdrClock" class="hidden sm:block text-xs font-semibold text-ink-700">--:--:--</div>
+          <button id="themeToggle" class="h-8 w-8 rounded-full bg-white border border-line grid place-items-center hover:bg-paper-200 transition-colors" title="Toggle dark mode">
+            <span id="themeIcon">🌙</span>
+          </button>
+          <div class="hidden sm:flex items-center gap-2 text-[10px] tracking-[0.18em] uppercase text-ink-700 bg-[#eef7f1] border border-[#cfe7d8] rounded-full px-3 py-1.5">
+            <span class="h-1.5 w-1.5 rounded-full bg-[#32a852]"></span>
+            Online
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="w-full px-4 sm:px-6 py-4 sm:py-6 flex-1 overflow-hidden">
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6 h-full">
+
+      <!-- Questions column -->
+      <section class="bg-paper-50 border border-line rounded-xl2 shadow-soft overflow-hidden flex flex-col min-h-0">
+        <div class="px-5 py-4 border-b border-line flex items-center justify-between">
+          <div class="text-[11px] tracking-[0.22em] uppercase font-semibold text-ink-700">Questions</div>
+          <div id="qCount" class="text-[10px] text-ink-600 bg-chip-bg border border-chip-line rounded-full px-2 py-0.5">0</div>
+        </div>
+        <div class="px-4 py-3 border-b border-line">
+          <div class="text-xs text-ink-600">Help me learn you faster. Answer or dismiss — I’ll turn answers into draft memories.</div>
+        </div>
+        <div id="qList" class="p-3 space-y-3 scrollable flex-1 min-h-0" style="max-height: calc(100vh - 230px);"></div>
+      </section>
+
+      <!-- Draft column -->
+      <section class="bg-paper-50 border border-line rounded-xl2 shadow-soft overflow-hidden flex flex-col min-h-0">
+        <div class="px-5 py-4 border-b border-line flex items-center justify-between">
+          <div class="text-[11px] tracking-[0.22em] uppercase font-semibold text-ink-700">Draft (Pending)</div>
+          <div id="draftCount" class="text-[10px] text-ink-600 bg-chip-bg border border-chip-line rounded-full px-2 py-0.5">0</div>
+        </div>
+
+        <div class="px-4 py-3 border-b border-line">
+          <div class="text-xs text-ink-600">These are candidates. Approve to promote into canonical memory.</div>
+        </div>
+
+        <div id="draftList" class="p-3 space-y-3 scrollable flex-1 min-h-0" style="max-height: calc(100vh - 330px);"></div>
+
+        <div class="p-4 border-t border-line bg-white">
+          <div class="text-[11px] tracking-[0.22em] uppercase font-semibold text-ink-700">Add Draft Memory</div>
+          <div class="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <input id="newTitle" class="text-xs bg-white border border-line rounded-full px-3 py-2" placeholder="Title (optional)" />
+            <input id="newCategory" class="text-xs bg-white border border-line rounded-full px-3 py-2" placeholder="Category (e.g. preference/ops)" />
+            <input id="newSource" class="text-xs bg-white border border-line rounded-full px-3 py-2" placeholder="Source ref (optional)" />
+            <input id="newConfidence" class="text-xs bg-white border border-line rounded-full px-3 py-2" placeholder="Confidence (0..1)" value="0.7" />
+          </div>
+          <textarea id="newStatement" class="mt-2 w-full text-xs bg-white border border-line rounded-xl2 px-3 py-2" rows="3" placeholder="Statement (required)"></textarea>
+          <div class="mt-3 flex items-center gap-2">
+            <button id="add" class="text-xs font-semibold bg-white border border-line rounded-full px-4 py-2 hover:bg-paper-200">Add</button>
+            <div id="addHint" class="text-xs text-ink-600"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Approved column -->
+      <section class="bg-paper-50 border border-line rounded-xl2 shadow-soft overflow-hidden flex flex-col min-h-0">
+        <div class="px-5 py-4 border-b border-line flex items-center justify-between">
+          <div class="text-[11px] tracking-[0.22em] uppercase font-semibold text-ink-700">Approved (Canonical)</div>
+          <div id="approvedCount" class="text-[10px] text-ink-600 bg-chip-bg border border-chip-line rounded-full px-2 py-0.5">0</div>
+        </div>
+
+        <div class="px-4 py-3 border-b border-line flex items-center justify-between">
+          <div class="text-xs text-ink-600">Approved memories auto-export into MEMORY.md.</div>
+          <button id="export" class="text-xs font-semibold bg-chip-bg border border-chip-line rounded-full px-3 py-1.5 hover:bg-paper-200" title="Force export to MEMORY.md">Export</button>
+        </div>
+
+        <div id="approvedList" class="p-3 space-y-3 scrollable flex-1 min-h-0" style="max-height: calc(100vh - 230px);"></div>
+
+        <div class="p-4 border-t border-line bg-white">
+          <div id="footerStatus" class="text-xs text-ink-600">Loading…</div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+
+  function normalizeTs(ts) {
+    const n = Number(ts);
+    if (Number.isFinite(n)) return n < 1e12 ? n*1000 : n;
+    const p = Date.parse(ts);
+    return Number.isFinite(p) ? p : Date.now();
+  }
+
+  function timeAgo(ts) {
+    const t = normalizeTs(ts);
+    const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
+    if (s < 10) return 'just now';
+    if (s < 60) return `${s}s ago`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 48) return `${h}h ago`;
+    const d = Math.floor(h / 24);
+    if (d < 14) return `${d}d ago`;
+    const w = Math.floor(d / 7);
+    if (w < 8) return `${w}w ago`;
+    const mo = Math.floor(d / 30);
+    if (mo < 24) return `${mo}mo ago`;
+    const y = Math.floor(d / 365);
+    return `${y}y ago`;
+  }
+
+  function esc(s) {
+    return String(s)
+      .replaceAll('&','&amp;')
+      .replaceAll('<','&lt;')
+      .replaceAll('>','&gt;')
+      .replaceAll('"','&quot;')
+      .replaceAll("'",'&#039;');
+  }
+
+  function confPill(c) {
+    const n = Number(c) || 0;
+    if (n >= 0.85) return `<span class="text-[10px] uppercase tracking-[0.14em] rounded-full px-2 py-1 border border-[#cfe7d8] bg-[#eef7f1] text-ink-700">🟢 High</span>`;
+    if (n >= 0.70) return `<span class="text-[10px] uppercase tracking-[0.14em] rounded-full px-2 py-1 border border-[#f2d7a8] bg-[#fff6e8] text-ink-700">🟠 Med</span>`;
+    return `<span class="text-[10px] uppercase tracking-[0.14em] rounded-full px-2 py-1 border border-[#f3d6d6] bg-[#fff1f1] text-ink-700">🔴 Low</span>`;
+  }
+
+  function prettyCategory(cat) {
+    if (!cat) return null;
+    const raw = String(cat).trim();
+    const nice = raw.replaceAll('_',' ').replaceAll('-',' ').replaceAll('/',' / ');
+    const key = raw.split('/')[0].toLowerCase();
+    const icon = ({
+      preference: '❤️',
+      ops: '⚙️',
+      ui: '🎨',
+      research: '📚',
+      system: '🛰️',
+      test: '🧪',
+      project: '🗺️',
+      personal: '🧍',
+      work: '🧰'
+    })[key] || '🗂';
+    return { nice, icon };
+  }
+
+  function displayWho(who) {
+    const w = (who || '').toString().trim();
+    if (!w) return 'Unknown';
+    if (w.toLowerCase() === 'jarvis') return 'Jarvis';
+    return w.charAt(0).toUpperCase() + w.slice(1);
+  }
+
+  function card(item, kind) {
+    const statement = String(item.statement || '').trim();
+    const title = item.title ? String(item.title) : (statement.length > 72 ? statement.slice(0, 72) + '…' : statement);
+
+    const conf = Number(item.confidence) || 0;
+    const confLabel = conf >= 0.85 ? 'High' : conf >= 0.70 ? 'Medium' : 'Low';
+    const who = displayWho(item.source_agent_id);
+    const catObj = prettyCategory(item.category);
+    const updated = timeAgo(item.updated_at);
+
+    const stripeCls = conf >= 0.85 ? 'bg-[#32a852]' : conf >= 0.70 ? 'bg-[#f59e0b]' : 'bg-[#ef4444]';
+
+    const metaRow = `
+      <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-ink-700">
+        ${catObj ? `<span class="text-[10px] uppercase tracking-[0.14em] rounded-full px-2 py-1 border border-chip-line bg-chip-bg">${esc(catObj.icon)} ${esc(catObj.nice.replaceAll('/',' › '))}</span>` : ''}
+        <span class="text-[10px] uppercase tracking-[0.14em] rounded-full px-2 py-1 border border-line bg-white">✨ ${esc(confLabel)} confidence</span>
+        <span class="text-[10px] uppercase tracking-[0.14em] rounded-full px-2 py-1 border border-line bg-white">👤 ${esc(who)}</span>
+        <span class="text-[10px] uppercase tracking-[0.14em] rounded-full px-2 py-1 border border-line bg-white">🕒 ${esc(updated)}</span>
+      </div>
+    `;
+
+    const actions = kind === 'draft'
+      ? `
+        <div class="mt-3 flex items-center gap-2">
+          <button class="approve text-xs font-semibold bg-white border border-line rounded-full px-3 py-1.5 hover:bg-paper-200" data-approve="${esc(item.id)}">Approve</button>
+          <button class="reject text-xs font-semibold bg-chip-bg border border-chip-line rounded-full px-3 py-1.5 hover:bg-paper-200" data-reject="${esc(item.id)}">Reject</button>
+        </div>
+      `
+      : `
+        <div class="mt-3 flex items-center gap-2">
+          <button class="reject text-xs font-semibold bg-white border border-line rounded-full px-3 py-1.5 hover:bg-paper-200" data-reject-approved="${esc(item.id)}" title="Reject (move out of canonical)">Reject</button>
+          <button class="reject text-xs font-semibold bg-chip-bg border border-chip-line rounded-full px-3 py-1.5 hover:bg-paper-200" data-reaffirm="${esc(item.id)}" title="Reaffirm (refresh its 90-day timer)">Reaffirm</button>
+        </div>
+      `;
+
+    return `
+      <div class="task-card bg-white border border-line rounded-xl2 shadow-card p-4 hover:shadow-soft transition-shadow relative overflow-hidden">
+        <div class="absolute left-0 top-0 h-full w-1 ${stripeCls}"></div>
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0 pl-1">
+            <div class="text-sm font-semibold">${esc(title)}</div>
+            ${metaRow}
+          </div>
+          <div class="flex items-center gap-2">${confPill(item.confidence)}</div>
+        </div>
+        <div class="mt-2 text-xs text-ink-700 leading-relaxed">${esc(statement)}</div>
+        ${actions}
+      </div>
+    `;
+  }
+
+  async function api(url, opts) {
+    const res = await fetch(url, { headers: { 'content-type':'application/json' }, ...opts });
+    const data = await res.json().catch(()=>({}));
+    if (!res.ok) throw new Error(data.error || ('HTTP '+res.status));
+    return data;
+  }
+
+  function startClock() {
+    const el = $('hdrClock');
+    if (!el) return;
+    const tick = () => {
+      const d = new Date();
+      el.textContent = d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+    };
+    tick();
+    setInterval(tick, 1000);
+  }
+
+  // Dark mode toggle (shared key with Mission Control)
+  function initTheme() {
+    const saved = localStorage.getItem('theme');
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const isDark = saved === 'dark' || (!saved && prefersDark);
+
+    if (isDark) {
+      document.documentElement.classList.add('dark');
+      $('themeIcon').textContent = '☀️';
+    } else {
+      document.documentElement.classList.remove('dark');
+      $('themeIcon').textContent = '🌙';
+    }
+  }
+
+  function toggleTheme() {
+    const isDark = document.documentElement.classList.toggle('dark');
+    localStorage.setItem('theme', isDark ? 'dark' : 'light');
+    $('themeIcon').textContent = isDark ? '☀️' : '🌙';
+  }
+
+  async function load() {
+    const q = $('q')?.value?.trim() || '';
+    const [health, qs, draft, approved] = await Promise.all([
+      api('/api/health'),
+      api('/api/questions?status=open&limit=50'),
+      api('/api/memories?bank=draft&status=pending' + (q?`&q=${encodeURIComponent(q)}`:'')),
+      api('/api/memories?bank=approved&status=approved' + (q?`&q=${encodeURIComponent(q)}`:'')),
+    ]);
+
+    const counts = Array.isArray(health.counts) ? health.counts : [];
+    const getCount = (bank, status) => {
+      const row = counts.find(c => c.bank === bank && c.status === status);
+      return row ? Number(row.n || 0) : 0;
+    };
+
+    const draftPending = getCount('draft','pending');
+    const approvedCount = getCount('approved','approved');
+
+    $('hdrDraft').textContent = String(draftPending);
+    $('hdrApproved').textContent = String(approvedCount);
+    $('draftCount').textContent = String(draftPending);
+    $('approvedCount').textContent = String(approvedCount);
+
+    // Questions
+    const qRows = (qs.rows || []);
+    $('qCount').textContent = String(qRows.length);
+    $('qList').innerHTML = qRows.map(q => {
+      return `
+        <div class="task-card bg-white border border-line rounded-xl2 shadow-card p-4">
+          <div class="text-sm font-semibold">❓ ${esc(q.question)}</div>
+          ${q.reason ? `<div class="mt-1 text-xs text-ink-600">${esc(q.reason)}</div>` : ''}
+          <div class="mt-3 flex gap-2">
+            <button class="qAnswer text-xs font-semibold bg-white border border-line rounded-full px-3 py-1.5 hover:bg-paper-200" data-q-answer="${esc(q.id)}">Answer</button>
+            <button class="qDismiss text-xs font-semibold bg-chip-bg border border-chip-line rounded-full px-3 py-1.5 hover:bg-paper-200" data-q-dismiss="${esc(q.id)}">Dismiss</button>
+          </div>
+        </div>
+      `;
+    }).join('') || `<div class="text-sm text-ink-600">No questions yet.</div>`;
+
+    $('draftList').innerHTML = draft.rows.map(r => card(r,'draft')).join('') || `<div class="text-sm text-ink-600">No pending drafts.</div>`;
+    $('approvedList').innerHTML = approved.rows.map(r => card(r,'approved')).join('') || `<div class="text-sm text-ink-600">No approved memories yet.</div>`;
+
+    const sweep = health.lastSweep;
+    let engine = '';
+    if (sweep) {
+      engine = ` • Engine: +${sweep.generatedDrafts} drafts, +${sweep.questionsMade||0} questions, ${sweep.autoApproved} auto-approved, ${sweep.lowqRejected} auto-rejected`;
+      if (sweep.conflictsFlagged) engine += `, ⚠️ ${sweep.conflictsFlagged} conflicts`;
+    }
+    $('footerStatus').textContent = `Last refresh: ${timeAgo(health.ts)}${engine}`;
+  }
+
+  document.addEventListener('click', async (e) => {
+    const a = e.target?.dataset?.approve;
+    const r = e.target?.dataset?.reject;
+    const ra = e.target?.dataset?.rejectApproved;
+    const reaf = e.target?.dataset?.reaffirm;
+    const qa = e.target?.dataset?.qAnswer;
+    const qd = e.target?.dataset?.qDismiss;
+
+    if (a) {
+      await api(`/api/memories/${a}/approve`, { method:'POST', body: JSON.stringify({ actor:'zeus' }) });
+      await load();
+      return;
+    }
+
+    if (r) {
+      await api(`/api/memories/${r}/reject`, { method:'POST', body: JSON.stringify({ actor:'hermes' }) });
+      await load();
+      return;
+    }
+
+    if (ra) {
+      if (!confirm('Reject this approved memory? It will be removed from canonical memory.')) return;
+      await api(`/api/memories/${ra}/reject`, { method:'POST', body: JSON.stringify({ actor:'chris', notes:'rejected from approved UI' }) });
+      await api('/api/export/memory-md', { method:'POST', body:'{}' });
+      await load();
+      return;
+    }
+
+    if (reaf) {
+      await api(`/api/memories/${reaf}/reaffirm`, { method:'POST', body: JSON.stringify({ actor:'chris' }) });
+      await load();
+      return;
+    }
+
+    if (qd) {
+      await api(`/api/questions/${qd}/dismiss`, { method:'POST', body: '{}' });
+      await load();
+      return;
+    }
+
+    if (qa) {
+      const ans = prompt('Your answer (one or two sentences):');
+      if (!ans || !ans.trim()) return;
+      await api(`/api/questions/${qa}/answer`, { method:'POST', body: JSON.stringify({ answer: ans.trim() }) });
+      await load();
+      return;
+    }
+  });
+
+  $('refresh')?.addEventListener('click', load);
+  $('q')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') load(); });
+
+  $('export')?.addEventListener('click', async () => {
+    $('footerStatus').textContent = 'Exporting…';
+    try {
+      const out = await api('/api/export/memory-md', { method:'POST', body: '{}' });
+      $('footerStatus').textContent = out.ok ? `Exported ${out.exported} memories → MEMORY.md` : 'Export failed.';
+    } catch (e) {
+      $('footerStatus').textContent = 'Export failed.';
+    }
+    await load();
+  });
+
+  $('add')?.addEventListener('click', async () => {
+    const statement = $('newStatement').value.trim();
+    if (!statement) { $('addHint').textContent = 'Statement is required.'; return; }
+
+    const confidence = Number($('newConfidence').value);
+    await api('/api/memories', {
+      method:'POST',
+      body: JSON.stringify({
+        bank:'draft', status:'pending',
+        title: $('newTitle').value.trim() || null,
+        statement,
+        category: $('newCategory').value.trim() || null,
+        confidence: Number.isFinite(confidence) ? confidence : 0.7,
+        source_type:'manual',
+        source_ref: $('newSource').value.trim() || null,
+        source_agent_id:'jarvis',
+        actor:'user'
+      })
+    });
+
+    $('addHint').textContent = 'Added.';
+    $('newTitle').value='';
+    $('newCategory').value='';
+    $('newSource').value='';
+    $('newConfidence').value='0.7';
+    $('newStatement').value='';
+    setTimeout(()=>{ $('addHint').textContent=''; }, 1500);
+    await load();
+  });
+
+  // Fix Mission Control link to current host
+  const host = window.location.hostname;
+  const mc = $('mcLink');
+  if (mc) mc.href = `http://${host}:5173`;
+
+  initTheme();
+  $('themeToggle')?.addEventListener('click', toggleTheme);
+
+  startClock();
+  load();
+  setInterval(load, 10000);
+</script>
+</body>
+</html>

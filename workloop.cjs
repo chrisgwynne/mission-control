@@ -91,7 +91,10 @@ function localDayOfWeek(tz = MAINT_WINDOW_TZ) {
 
 // Hard limits (tuned for testing — adjust based on results)
 const MAX_AGENT_RUNS_PER_HOUR = Number(process.env.WORKLOOP_MAX_RUNS_PER_HOUR || 120); // allow queue drain
-const MIN_INTERVAL_BETWEEN_RUNS_MS = Number(process.env.WORKLOOP_MIN_INTERVAL_MS || (30 * 1000)); // responsive testing
+// Global min interval protects against runaway loops (kept small; per-agent throttles do the real shaping)
+const MIN_INTERVAL_BETWEEN_RUNS_MS = Number(process.env.WORKLOOP_MIN_INTERVAL_MS || (2 * 1000));
+// Per-agent throttle prevents one failing agent/event from starving others
+const MIN_INTERVAL_BETWEEN_RUNS_PER_AGENT_MS = Number(process.env.WORKLOOP_MIN_INTERVAL_PER_AGENT_MS || (10 * 1000));
 
 function readState() {
   try {
@@ -103,6 +106,7 @@ function readState() {
   } catch {
     return {
       lastAgentRunAt: 0,
+      lastAgentRunAtByAgent: {},
       agentRunsThisHour: 0,
       hourStartedAt: Date.now(),
       lastScanResults: {},
@@ -498,12 +502,35 @@ async function scanMissionControl() {
 
 // ===== INTEREST FILTER =====
 
-function shouldSpawnAgent(st, eventType, priority) {
+function agentFromEventType(eventType = '') {
+  const s = String(eventType || '');
+  // Common patterns:
+  // - assigned-first-touch:<agent>:<task>
+  // - inprog-stale:<agent>:<task>
+  // - mention-queue:<agent>
+  const parts = s.split(':');
+  if (parts[0] === 'mention-queue' && parts[1]) return parts[1];
+  if ((parts[0] === 'assigned-first-touch' || parts[0] === 'inprog-stale') && parts[1]) return parts[1];
+  return null;
+}
+
+function shouldSpawnAgent(st, eventType, priority, agentIdOverride = null) {
+  const agentId = agentIdOverride || agentFromEventType(eventType);
+
   // Per-event backoff/quarantine
   const bi = backoffInfo(st, eventType);
   if (bi) {
     console.log(`[filter] ${eventType}: BLOCKED (backoff ${Math.round((bi.until - nowMs())/1000)}s, strikes=${bi.strikes}, reason=${bi.reason})`);
     return false;
+  }
+
+  // Per-agent quarantine
+  if (agentId) {
+    const ai = backoffInfo(st, `agent:${agentId}`);
+    if (ai) {
+      console.log(`[filter] ${eventType}: BLOCKED (agent ${agentId} backoff ${Math.round((ai.until - nowMs())/1000)}s, strikes=${ai.strikes}, reason=${ai.reason})`);
+      return false;
+    }
   }
 
   // Check quiet mode
@@ -524,11 +551,22 @@ function shouldSpawnAgent(st, eventType, priority) {
     return false;
   }
   
-  // Rate limit: min interval
+  // Rate limit: min interval (global)
   const sinceLast = nowMs() - st.lastAgentRunAt;
   if (sinceLast < MIN_INTERVAL_BETWEEN_RUNS_MS) {
-    console.log(`[filter] ${eventType}: BLOCKED (interval ${Math.round(sinceLast/1000)}s < ${MIN_INTERVAL_BETWEEN_RUNS_MS/1000}s)`);
+    console.log(`[filter] ${eventType}: BLOCKED (global interval ${Math.round(sinceLast/1000)}s < ${MIN_INTERVAL_BETWEEN_RUNS_MS/1000}s)`);
     return false;
+  }
+
+  // Rate limit: min interval (per-agent)
+  if (agentId) {
+    st.lastAgentRunAtByAgent ||= {};
+    const last = Number(st.lastAgentRunAtByAgent[agentId] || 0);
+    const sinceAgent = nowMs() - last;
+    if (sinceAgent < MIN_INTERVAL_BETWEEN_RUNS_PER_AGENT_MS) {
+      console.log(`[filter] ${eventType}: BLOCKED (agent interval ${agentId} ${Math.round(sinceAgent/1000)}s < ${MIN_INTERVAL_BETWEEN_RUNS_PER_AGENT_MS/1000}s)`);
+      return false;
+    }
   }
   
   // Priority gate
@@ -579,6 +617,8 @@ Reply with exactly: ASSIGNED or NO_ACTION`;
     const reply = openclawAgent('zeus', prompt, 180);
     console.log('[zeus-assign]', reply.slice(0, 100));
     st.lastAgentRunAt = nowMs();
+    st.lastAgentRunAtByAgent ||= {};
+    st.lastAgentRunAtByAgent['zeus'] = nowMs();
     st.agentRunsThisHour++;
   } catch (e) {
     console.error('[zeus-assign] failed:', e.message);
@@ -608,6 +648,8 @@ Reply with exactly: WATCHED or ALERTS_FOUND`;
     const reply = openclawAgent('hermes', prompt, 180);
     console.log('[hermes-watch]', reply.slice(0, 100));
     st.lastAgentRunAt = nowMs();
+    st.lastAgentRunAtByAgent ||= {};
+    st.lastAgentRunAtByAgent['hermes'] = nowMs();
     st.agentRunsThisHour++;
   } catch (e) {
     console.error('[hermes-watch] failed:', e.message);
@@ -649,13 +691,29 @@ Reply with exactly: WORKED or BLOCKED`;
     }
 
     st.lastAgentRunAt = nowMs();
+    st.lastAgentRunAtByAgent ||= {};
+    if (agentId) st.lastAgentRunAtByAgent[agentId] = nowMs();
     st.agentRunsThisHour++;
   } catch (e) {
-    console.error(`[${agentId}-work] failed:`, e.message);
+    const msg = String(e?.message || e);
+    console.error(`[${agentId}-work] failed:`, msg);
+
+    // If a provider is hard-failing (e.g., insufficient balance), quarantine the *agent*
+    // so it can't starve everyone else by getting respawned on every tick.
+    if (/insufficient balance \(1008\)/i.test(msg)) {
+      const b = setBackoff(st, `agent:${agentId}`, 'insufficient_balance');
+      console.log(`[backoff] agent:${agentId} -> ${Math.round((b.until-nowMs())/60000)}m (strikes=${b.strikes})`);
+    }
+
     if (eventKey) {
       const b = setBackoff(st, eventKey, 'spawn_failed');
       console.log(`[backoff] ${eventKey} -> ${Math.round((b.until-nowMs())/60000)}m (strikes=${b.strikes})`);
     }
+
+    st.lastAgentRunAt = nowMs();
+    st.lastAgentRunAtByAgent ||= {};
+    if (agentId) st.lastAgentRunAtByAgent[agentId] = nowMs();
+    st.agentRunsThisHour++;
   }
 }
 
@@ -686,20 +744,90 @@ Reply with exactly: RESEARCHED or NEEDS_MORE_INFO`;
   }
 }
 
+function autoArchivePromoEmailTasks(st) {
+  // Deterministic triage to prevent promo noise from clogging Assigned/In Progress.
+  // Archives tasks created from Gmail that look like promos/no-reply AND not IMPORTANT.
+  const db = new Database(DB_PATH);
+  try {
+    const rows = db.prepare(`
+      SELECT id, title, description, priority, status
+      FROM tasks
+      WHERE title LIKE '📧 %'
+        AND status IN ('inbox','assigned','in_progress')
+      ORDER BY updated_at DESC
+      LIMIT 200
+    `).all();
+
+    let archived = 0;
+
+    for (const t of rows) {
+      const desc = String(t.description || '');
+      const labels = (desc.match(/Labels:\s*([^\n]+)/i)?.[1] || '');
+      const from = (desc.match(/From:\s*([^\n]+)/i)?.[1] || '');
+
+      const isImportant = /\bIMPORTANT\b/i.test(labels) || Number(t.priority || 0) >= 3;
+      const isPromo = /CATEGORY_PROMOTIONS/i.test(labels) || /\bdeals\b/i.test(desc) || /\bbargains\b/i.test(desc) || /\bsavings\b/i.test(desc);
+      const isNoReply = /no-?reply/i.test(from);
+
+      if (!isImportant && (isPromo || isNoReply)) {
+        const ts = nowMs();
+        db.prepare(`UPDATE tasks SET status='archived', updated_at=@ts WHERE id=@id`).run({ id: t.id, ts });
+        db.prepare(`
+          INSERT INTO activities (id, created_at, type, agent_id, task_id, message)
+          VALUES (@id, @created_at, @type, @agent_id, @task_id, @message)
+        `).run({
+          id: 'act_' + nanoid(),
+          created_at: ts,
+          type: 'task_archived',
+          agent_id: 'hermes',
+          task_id: t.id,
+          message: `Auto-triage: archived promo/no-reply email task: ${t.title}`
+        });
+        archived++;
+      }
+    }
+
+    st.lastAutoTriage ||= {};
+    st.lastAutoTriage.at = new Date(Date.now()).toISOString();
+    st.lastAutoTriage.archived = archived;
+    writeState(st);
+
+    return archived;
+  } catch {
+    return 0;
+  } finally {
+    try { db.close(); } catch {}
+  }
+}
+
+function tsNow() { return Date.now(); }
+
 async function spawnHermesToProcessEmail(st, emails) {
-  const emailList = emails.map(e => `- "${e.subject}" from ${e.from}`).join('\n');
+  // First: auto-archive obvious promo noise so Hermes focuses on important mail.
+  try { autoArchivePromoEmailTasks(st); } catch {}
+
+  const important = (emails || []).filter(e => {
+    const labels = Array.isArray(e.labels) ? e.labels : [];
+    const from = String(e.from || '');
+    return labels.includes('IMPORTANT') && !/noreply/i.test(from);
+  });
+
+  if (!important.length) {
+    console.log('[hermes-email] no important emails (after promo triage)');
+    return;
+  }
+
+  const emailList = important.map(e => `- "${e.subject}" from ${e.from}`).join('\n');
   const prompt = `You are HERMES, the Janitor.
 
-New emails detected:
+IMPORTANT emails detected:
 ${emailList}
 
 Your job:
-1. Read the emails (if accessible)
-2. Create tasks in Mission Control for actionable items
-3. Flag urgent items for Zeus/Jarvis
-4. Post a summary to the break room
+1. Create tasks in Mission Control for actionable items
+2. Flag urgent items for Zeus/Jarvis
+3. Post a short summary to the break room
 
-Use ./mc to create tasks (they go to Inbox for Zeus).
 Be selective - not every email needs a task.
 
 Reply with exactly: PROCESSED or FLAGGED_URGENT`;
@@ -1361,11 +1489,25 @@ async function tick() {
   }
 
   // PRIORITY 1: Critical - Assigned tasks need first touch → spawn the assignee
+  // PRIORITY 1: Critical - In progress tasks stale → nudge assignee immediately
+  // If tasks are in_progress and stale, that is the primary failure mode we care about.
+  if ((mc.inProgressStale || []).length > 0) {
+    const pick = mc.inProgressStale[0];
+    const agentId = pick.agent_id;
+    const key = `inprog-stale:${agentId}:${pick.id}`;
+    if (agentId && shouldSpawnAgent(st, key, 1, agentId)) {
+      await spawnSpecialistToWork(st, agentId, pick.id, pick.title, key);
+      writeState(st);
+      return;
+    }
+  }
+
+  // PRIORITY 1: Critical - Assigned tasks need first touch → spawn the assignee
   if ((mc.assignedReady || []).length > 0) {
     const pick = mc.assignedReady[0];
     const agentId = pick.agent_id;
     const key = `assigned-first-touch:${agentId}:${pick.id}`;
-    if (agentId && shouldSpawnAgent(st, key, 1)) {
+    if (agentId && shouldSpawnAgent(st, key, 1, agentId)) {
       await spawnSpecialistToWork(st, agentId, pick.id, pick.title, key);
       writeState(st);
       return;
@@ -1411,17 +1553,7 @@ async function tick() {
     return;
   }
 
-  // PRIORITY 2: High - In progress tasks stale → nudge assignee, but never starve QA/HR.
-  if ((mc.inProgressStale || []).length > 0) {
-    const pick = mc.inProgressStale[0];
-    const agentId = pick.agent_id;
-    const key = `inprog-stale:${agentId}:${pick.id}`;
-    if (agentId && shouldSpawnAgent(st, key, 2)) {
-      await spawnSpecialistToWork(st, agentId, pick.id, pick.title, key);
-      writeState(st);
-      return;
-    }
-  }
+  // (moved) in_progress stale handling is now PRIORITY 1 above
 
   // PRIORITY 2: High - Stuck tasks → Hermes nudges
   if (mc.stuck.length > 0 && shouldSpawnAgent(st, 'hermes-watch', 2)) {

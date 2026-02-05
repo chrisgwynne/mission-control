@@ -236,3 +236,9 @@ You have unrestricted internet access, browser automation, and shell execution. 
 
 **Stop condition:** If you've tried at least 2 approaches and hit hard blocks, create an Inbox task with the failure log + the next best approach, then move on.
 
+---
+
+## Recent Learnings (last 24h)
+- Always post a completion summary that includes: files changed, what to click/verify, and what you intentionally did *not* change.
+- Reduce back-and-forth: when asked for a UI fix, propose 1–2 candidate causes + test plan before patching.
+- Responsive work: do not break desktop; implement via breakpoints and verify both desktop + mobile.
