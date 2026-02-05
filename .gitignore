@@ -3,3 +3,6 @@ mc.db
 *.state.json
 *.backup.*
 .DS_Store
+
+# secrets
+*credentials*.json
