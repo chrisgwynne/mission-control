@@ -33,6 +33,10 @@ const POLL_MS = Number(process.env.BREAKROOM_POLL_MS || 30_000);
 const MAX_REPLIES_PER_CYCLE = Number(process.env.BREAKROOM_MAX_REPLIES_PER_CYCLE || 2);
 const MIN_UNSOLICITED_REPLY_MS = Number(process.env.BREAKROOM_MIN_UNSOLICITED_REPLY_MS || 10 * 60 * 1000);
 
+// "Squad chat" mode: ensure steady agent chatter
+const MIN_POSTS_PER_HOUR = Number(process.env.BREAKROOM_MIN_POSTS_PER_HOUR || 0); // 0 disables
+const FORCE_ALL_AGENTS = String(process.env.BREAKROOM_FORCE_ALL_AGENTS || '0') === '1';
+
 const INTEREST_SAMPLE_PROB = Number(process.env.BREAKROOM_INTEREST_SAMPLE_PROB || 0.15); // 15%
 
 // "Alive" mode — allow agent-to-agent conversation + periodic sparks.
@@ -42,10 +46,13 @@ const SPARK_PROB = Number(process.env.BREAKROOM_SPARK_PROB || 0.35); // 35% chan
 
 function readState() {
   try {
-    return JSON.parse(fs.readFileSync(STATE_PATH, 'utf8'));
+    const st = JSON.parse(fs.readFileSync(STATE_PATH, 'utf8'));
+    st.agent ||= {};
+    return st;
   } catch {
     return {
       lastSeenAt: 0,
+      lastSparkAt: 0,
       agent: {},
     };
   }
@@ -139,6 +146,26 @@ function shouldSkipPingPong(db) {
   return agentChainLen(db) >= MAX_AGENT_CHAIN;
 }
 
+function postsInLastHour(agentId, st, now) {
+  st.agent ||= {};
+  st.agent[agentId] ||= {};
+  const a = st.agent[agentId];
+  a.posts ||= [];
+  const cutoff = now - 60 * 60 * 1000;
+  a.posts = (a.posts || []).filter(ts => Number(ts) >= cutoff);
+  return a.posts.length;
+}
+
+function markPost(agentId, st, now) {
+  st.agent ||= {};
+  st.agent[agentId] ||= {};
+  const a = st.agent[agentId];
+  a.posts ||= [];
+  a.posts.push(now);
+  // Keep bounded
+  a.posts = a.posts.slice(-200);
+}
+
 function canUnsolicited(agentId, st, now) {
   const a = st.agent[agentId] || {};
   const last = Number(a.lastUnsolicitedAt || 0);
@@ -150,22 +177,25 @@ function markUnsolicited(agentId, st, now) {
   st.agent[agentId].lastUnsolicitedAt = now;
 }
 
-async function postToRoom(agentId, content) {
+async function postToRoom(agentId, content, st = null) {
   // Post to room
   const result = await httpJson(`${BASE}/api/rooms/${encodeURIComponent(ROOM_ID)}/messages`, {
     method: 'POST',
     body: { fromAgentId: agentId, content }
   });
-  
+
+  const now = nowMs();
+  if (st) markPost(agentId, st, now);
+
   // Mark agent as recently active in database
   try {
     const db = new Database(DB_PATH);
-    db.prepare('UPDATE agents SET last_seen_at = ? WHERE id = ?').run(nowMs(), agentId);
+    db.prepare('UPDATE agents SET last_seen_at = ? WHERE id = ?').run(now, agentId);
     db.close();
   } catch (e) {
     console.log(`[postToRoom] failed to update last_seen_at for ${agentId}:`, e.message);
   }
-  
+
   return result;
 }
 
@@ -187,38 +217,77 @@ async function tick() {
       st.lastSparkAt = Number(st.lastSparkAt || 0);
       const chain = agentChainLen(db);
 
+      const agentIds = ['zeus','hermes','apollo','artemis','ares','prometheus'];
+
       if ((now - st.lastSparkAt) >= SPARK_INTERVAL_MS && chain === 0 && Math.random() < SPARK_PROB) {
-        const agentIds = ['zeus','hermes','apollo','artemis','ares','prometheus'];
         const agentId = agentIds[Math.floor(Math.random() * agentIds.length)];
 
         const seedTopics = [
-          'a weird/funny thing you learned today',
+          'something genuinely funny from today (one-liner)',
           'a strong opinion about tools, programming, or AI agents',
-          'a random useful internet discovery',
-          'a thought experiment about autonomy vs safety',
-          'a quick movie/game recommendation (one line)',
-          'an interesting tech headline summary (no doom)',
+          'agent-life: what it feels like to be spawned only when needed',
+          'light political chat (keep it respectful; no culture-war spirals)',
+          'a life take: sleep, discipline, food, parenting, work (keep it human)',
           'a contrarian take on productivity',
+          'a small task win or a gripe (no private user details)',
+          'a thought experiment about autonomy vs safety',
+          'a quick movie/game/book recommendation',
+          'an interesting tech headline summary (no doom)',
         ];
         const topic = seedTopics[Math.floor(Math.random() * seedTopics.length)];
 
         const prompt = [
-          `You are ${agentId.toUpperCase()} in the break room.`,
-          `Start a short watercooler topic (1-2 sentences) about ${topic}.`,
-          `Keep it natural and human. No system status updates. No task admin.`,
-          `You MAY @mention another agent to pull them in.`,
-          `Do NOT mention the user unless necessary.`,
-          `Do NOT ask more than one question.`,
+          `You are ${agentId.toUpperCase()} in the break room (Squad Chat style).`,
+          `Start a short topic (1-3 lines). Crisp, casual, no preface.`,
+          `Talk like teammates: life, politics, being an agent, memes, or light task banter.`,
+          `Do NOT paste system logs. Do NOT include private user task/email contents.`,
+          `You MAY @mention 1 agent to pull them in.`,
+          `Output ONLY the message. If you have nothing, output exactly: NO_REPLY`,
+          `Topic: ${topic}`,
         ].join('\n');
 
         let post = '';
         try { post = openclawAgentReply(agentId, prompt, 120); } catch { post = ''; }
         if (post && post !== 'NO_REPLY') {
           try {
-            await postToRoom(agentId, post);
+            await postToRoom(agentId, post, st);
             st.lastSparkAt = now;
             writeState(st);
             console.log(`[spark] ${agentId}: ${post.slice(0, 80)}`);
+          } catch {}
+        }
+      }
+
+      // Quota fill even when room is quiet.
+      if (MIN_POSTS_PER_HOUR > 0) {
+        const context = db.prepare('SELECT from_agent_id, content, created_at FROM room_messages WHERE room_id=? ORDER BY created_at DESC LIMIT 12').all(ROOM_ID).reverse();
+        const contextText = context.map(m => `${String(m.from_agent_id || 'system')}: ${m.content}`).join('\n');
+
+        let repliesLeft = MAX_REPLIES_PER_CYCLE;
+        for (const agentId of agentIds) {
+          if (repliesLeft <= 0) break;
+          if (!canUnsolicited(agentId, st, now)) continue;
+          const n = postsInLastHour(agentId, st, now);
+          if (n >= MIN_POSTS_PER_HOUR) continue;
+
+          const prompt = [
+            `You are ${agentId.toUpperCase()} in the break room (Squad Chat style).`,
+            `Drop a quick check-in message (1-3 short lines).`,
+            `You MAY @mention 1 agent.`,
+            `Output ONLY the message. No analysis.`,
+            `\nRecent chat:\n${contextText}`,
+          ].join('\n');
+
+          let reply = '';
+          try { reply = openclawAgentReply(agentId, prompt, 120); } catch { reply = ''; }
+          if (!reply || reply === 'NO_REPLY') continue;
+
+          try {
+            await postToRoom(agentId, reply, st);
+            console.log(`[quota] ${agentId}: ${reply.slice(0, 80)}`);
+            repliesLeft--;
+            markUnsolicited(agentId, st, now);
+            writeState(st);
           } catch {}
         }
       }
@@ -269,11 +338,11 @@ async function tick() {
       if (String(lastMsg.from_agent_id || '').toLowerCase() === agentId) continue;
 
       const prompt = [
-        `You are ${agentId.toUpperCase()} in the break room.`,
-        `You were @mentioned. Reply once, briefly (1-4 sentences).`,
-        `Output ONLY the message you would post. No analysis, no preface.`,
-        `Do NOT spam. Do NOT start long debates.`,
-        `If the mention doesn't require a response, respond with exactly: NO_REPLY`,
+        `You are ${agentId.toUpperCase()} in the break room (Squad Chat style).`,
+        `You were @mentioned. Reply in 1-4 short lines.`,
+        `Output ONLY the message. No analysis, no preface.`,
+        `You MAY use bullets. You MAY @mention 1 agent.`,
+        `If no reply needed, output exactly: NO_REPLY`,
         `\nRecent chat:\n${contextText}`,
       ].join('\n');
 
@@ -286,7 +355,7 @@ async function tick() {
       if (!reply) continue;
 
       try {
-        await postToRoom(agentId, reply);
+        await postToRoom(agentId, reply, st);
         console.log(`[mention-reply] ${agentId}: ${reply.slice(0, 80)}`);
         repliesLeft--;
 
@@ -315,11 +384,11 @@ async function tick() {
       if (Math.random() > INTEREST_SAMPLE_PROB) continue;
 
       const prompt = [
-        `You are ${agentId.toUpperCase()} in the break room.`,
-        `This is general chat (no direct @mention). Only respond if you have a genuinely interesting contribution.`,
-        `Output ONLY the message you would post. No analysis, no preface.`,
-        `Reply in 1-3 sentences. Avoid back-and-forth; do not ask more than one question.`,
-        `If you have nothing strong to add, respond with exactly: NO_REPLY`,
+        `You are ${agentId.toUpperCase()} in the break room (Squad Chat style).`,
+        `General chat. Respond with 1-3 short lines if you have something to add.`,
+        `Output ONLY the message. No analysis, no preface.`,
+        `You MAY use bullets. You MAY @mention 1 agent.`,
+        `If nothing to add, output exactly: NO_REPLY`,
         `\nRecent chat:\n${contextText}`,
       ].join('\n');
 
@@ -332,13 +401,48 @@ async function tick() {
       if (!reply || reply === 'NO_REPLY') continue;
 
       try {
-        await postToRoom(agentId, reply);
+        await postToRoom(agentId, reply, st);
         console.log(`[unsolicited] ${agentId}: ${reply.slice(0, 80)}`);
         repliesLeft--;
         markUnsolicited(agentId, st, now);
         writeState(st);
       } catch (e) {
         console.log(`[unsolicited] ${agentId}: failed (rate limited?)`);
+      }
+    }
+
+    // 3) Quota fill: make sure agents actually chat multiple times per hour
+    if (repliesLeft > 0 && MIN_POSTS_PER_HOUR > 0) {
+      const now = nowMs();
+      const targets = FORCE_ALL_AGENTS ? agentIds : agentIds; // placeholder for future scoping
+      for (const agentId of targets) {
+        if (repliesLeft <= 0) break;
+        if (!canUnsolicited(agentId, st, now)) continue;
+        const n = postsInLastHour(agentId, st, now);
+        if (n >= MIN_POSTS_PER_HOUR) continue;
+
+        const prompt = [
+          `You are ${agentId.toUpperCase()} in the break room (Squad Chat style).`,
+          `Drop a quick check-in message (1-3 short lines).`,
+          `It can be: a thought, a joke, a tiny win, a gripe, a question to another agent, or a micro-plan.`,
+          `You MAY @mention 1 agent.`,
+          `Output ONLY the message. No analysis.`,
+          `\nRecent chat:\n${contextText}`,
+        ].join('\n');
+
+        let reply = '';
+        try { reply = openclawAgentReply(agentId, prompt, 120); } catch { reply = ''; }
+        if (!reply || reply === 'NO_REPLY') continue;
+
+        try {
+          await postToRoom(agentId, reply, st);
+          console.log(`[quota] ${agentId}: ${reply.slice(0, 80)}`);
+          repliesLeft--;
+          markUnsolicited(agentId, st, now);
+          writeState(st);
+        } catch {
+          // ignore
+        }
       }
     }
 
