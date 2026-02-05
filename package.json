@@ -1,0 +1,25 @@
+{
+  "name": "dashboard",
+  "version": "1.0.0",
+  "description": "This folder contains a single-file static HTML replica of the provided dashboard screenshot.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "node server.js",
+    "start": "node server.js",
+    "db:reset": "node scripts/db-reset.js",
+    "db:seed": "node scripts/db-seed.js",
+    "db:migrate": "node scripts/db-migrate.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "private": "true",
+  "dependencies": {
+    "better-sqlite3": "^12.6.2",
+    "express": "^5.2.1",
+    "nanoid": "^5.1.6",
+    "ws": "^8.19.0"
+  }
+}

@@ -1,0 +1,1147 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mission Control Dashboard (Replica)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            paper: {
+              50: '#faf9f7',
+              100: '#f6f3ef',
+              200: '#efe9e1',
+            },
+            ink: {
+              600: '#5b5b5b',
+              700: '#3f3f3f',
+              800: '#2a2a2a',
+            },
+            line: '#e7e1d8',
+            chip: {
+              bg: '#f3efe9',
+              line: '#e6ded3'
+            },
+          },
+          boxShadow: {
+            soft: '0 10px 25px rgba(31, 41, 55, 0.08)',
+            card: '0 8px 18px rgba(31, 41, 55, 0.08)',
+          },
+          borderRadius: {
+            xl2: '1.1rem',
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    /* tiny "print-like" look */
+    :root { color-scheme: light; }
+    /* Drag and drop styles */
+    .task-card { transition: transform 0.1s, box-shadow 0.1s; }
+    .task-card.dragging { opacity: 0.5; transform: rotate(2deg); }
+    .col-drop-zone { transition: background-color 0.2s; }
+    .col-drop-zone.drag-over { background-color: rgba(200, 182, 156, 0.3); border: 2px dashed #c8b69c; }
+    
+    /* Mobile responsiveness */
+    .mobile-menu-btn { display: none; }
+    .mobile-sidebar { display: none; }
+    
+    @media (max-width: 1023px) {
+      /* Tablet: 2-column kanban */
+      .kanban-grid { grid-template-columns: repeat(2, 1fr) !important; }
+      .desktop-sidebar { display: none; }
+      .mobile-sidebar { display: block; }
+    }
+    
+    @media (max-width: 767px) {
+      /* Mobile: single column, full-width drawers */
+      .kanban-grid { grid-template-columns: 1fr !important; }
+      .header-stats { display: none; }
+      .mobile-menu-btn { display: flex; }
+      
+      /* Modal panels full width on mobile */
+      .modal-panel { width: 100vw !important; max-width: 100vw !important; }
+      
+      /* Header adjustments */
+      header .flex.items-center.gap-3 { flex-wrap: wrap; }
+      header .flex.items-center.gap-3 > div:first-child { order: 1; }
+      
+      /* Main grid stack */
+      main .grid { grid-template-columns: 1fr !important; }
+      
+      /* Right sidebar becomes bottom section */
+      .right-sidebar { order: 3; }
+      @media (max-width: 767px) {
+        .right-sidebar { display: none; }
+      }
+    }
+    
+    /* Dark mode support - Warm, accessible dark theme */
+    .dark { color-scheme: dark; }
+    .dark body { background-color: #1e1c1a; color: #f0ebe4; }
+    .dark header { background-color: rgba(38, 35, 32, 0.95); border-color: #3d3834; }
+    
+    /* Card/panel backgrounds - warm charcoal */
+    .dark .bg-paper-50 { background-color: #2a2622; }
+    .dark .bg-paper-100 { background-color: #1e1c1a; }
+    .dark .bg-white { background-color: #35302b; }
+    
+    /* Borders - subtle warm gray */
+    .dark .border-line { border-color: #4a443e; }
+    .dark .border-chip-line { border-color: #5a534c; }
+    
+    /* Text colors - warm off-white to muted */
+    .dark .text-ink-800 { color: #f5f0e8; }
+    .dark .text-ink-700 { color: #c9c2b8; }
+    .dark .text-ink-600 { color: #9a9289; }
+    .dark .text-ink-500 { color: #7a736b; }
+    
+    /* Chips - subtle warm gray */
+    .dark .bg-chip-bg { background-color: #3d3834; }
+    
+    /* Hover states */
+    .dark .hover\:bg-paper-200:hover { background-color: #4a443e; }
+    .dark .hover\:shadow-soft:hover { box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4); }
+    
+    /* Modal/Drawer panels - catch ALL bg-white instances in modals */
+    .dark #taskModalPanel, .dark #agentModalPanel, .dark #docModalPanel, 
+    .dark #decisionModalPanel, .dark #breakroomModalPanel, .dark #archivedModalPanel,
+    .dark #newTaskPanel,
+    .dark #taskModalPanel.bg-white, .dark #agentModalPanel.bg-white, 
+    .dark #docModalPanel.bg-white, .dark #decisionModalPanel.bg-white, 
+    .dark #breakroomModalPanel.bg-white, .dark #archivedModalPanel.bg-white,
+    .dark #newTaskPanel.bg-white { 
+      background-color: #2a2622 !important; 
+      border-color: #4a443e !important; 
+    }
+    
+    /* All bg-white elements inside modals */
+    .dark #taskModalPanel [class*="bg-white"],
+    .dark #agentModalPanel [class*="bg-white"],
+    .dark #docModalPanel [class*="bg-white"],
+    .dark #decisionModalPanel [class*="bg-white"],
+    .dark #breakroomModalPanel [class*="bg-white"],
+    .dark #archivedModalPanel [class*="bg-white"],
+    .dark #newTaskPanel [class*="bg-white"] {
+      background-color: #35302b !important;
+      border-color: #4a443e !important;
+    }
+    
+    /* Direct children bg-white in modals */
+    .dark #taskModalPanel > div, .dark #agentModalPanel > div,
+    .dark #docModalPanel > div, .dark #decisionModalPanel > div,
+    .dark #breakroomModalPanel > div, .dark #archivedModalPanel > div,
+    .dark #newTaskPanel > div {
+      background-color: #2a2622 !important;
+    }
+    
+    /* Kanban columns - override opacity variants */
+    .dark .bg-paper-100\/70 { background-color: rgba(42, 38, 34, 0.9) !important; }
+    .dark .bg-paper-100\/60 { background-color: rgba(42, 38, 34, 0.85) !important; }
+    .dark .bg-paper-100\/50 { background-color: rgba(42, 38, 34, 0.8) !important; }
+    
+    /* Kanban column backgrounds */
+    .dark [class*="col-"] { background-color: transparent; }
+    .dark .col-drop-zone { background-color: rgba(42, 38, 34, 0.5); }
+    
+    /* Global bg-white override in dark mode */
+    .dark .bg-white { 
+      background-color: #35302b !important; 
+    }
+    
+    /* Article/task cards */
+    .dark article.bg-white, .dark .bg-white.rounded-xl2, .dark article[class*="bg-white"] { 
+      background-color: #35302b !important; 
+      border-color: #4a443e !important;
+    }
+    
+    /* Modal inner content areas */
+    .dark [id$="Modal"] .bg-white, .dark [id$="Panel"] .bg-white,
+    .dark .modal-content, .dark .drawer-content {
+      background-color: #35302b !important;
+    }
+    
+    /* Inline Tailwind bg colors that need dark mode overrides */
+    .dark .bg-\[\#fafafa\], .dark .bg-\[\#f2f2f2\], .dark .bg-\[\#f6f6f6\],
+    .dark .bg-\[\#f5f5f5\], .dark .bg-\[\#eeeeee\], .dark .bg-\[\#e0e0e0\],
+    .dark [class*="bg-[#fafafa]"], .dark [class*="bg-[#f2f2f2]"], 
+    .dark [class*="bg-[#f5f5f5]"], .dark [class*="bg-[#eeeeee]"] {
+      background-color: #35302b !important;
+    }
+    
+    /* Catch-all for ANY bg-[#hex] in dark mode */
+    .dark [class^="bg-[#"], .dark [class*=" bg-[#"] {
+      background-color: #35302b !important;
+    }
+    
+    /* Form backgrounds in modals */
+    .dark form[class*="bg-"], .dark .form-bg, .dark .modal-form {
+      background-color: #35302b !important;
+    }
+    
+    /* Form inputs */
+    .dark input, .dark select, .dark textarea { 
+      background-color: #35302b; 
+      border-color: #4a443e; 
+      color: #f5f0e8;
+    }
+    .dark input::placeholder { color: #7a736b; }
+    
+    /* Status pills */
+    .dark .bg-\[\#eef7f1\] { background-color: #1a3d2e; border-color: #2d5a45; }
+    .dark .bg-\[\#e6f4ec\] { background-color: #1a3d2e; }
+    
+    /* Modal backdrop */
+    .dark #modalBackdrop { background-color: rgba(0, 0, 0, 0.6) !important; }
+    
+    /* Shadow adjustments for dark mode */
+    .dark .shadow-soft { box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4) !important; }
+    .dark .shadow-card { box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35) !important; }
+    
+    /* Scrollbar styling */
+    .dark ::-webkit-scrollbar { width: 8px; }
+    .dark ::-webkit-scrollbar-track { background: #2a2622; }
+    .dark ::-webkit-scrollbar-thumb { background: #4a443e; border-radius: 4px; }
+    .dark ::-webkit-scrollbar-thumb:hover { background: #5a534c; }
+    
+    /* Drag and drop dark mode */
+    .dark .col-drop-zone.drag-over { background-color: rgba(90, 83, 76, 0.4) !important; border-color: #7a736b !important; }
+  </style>
+</head>
+<body class="bg-paper-100 text-ink-800">
+  <div class="min-h-screen">
+    <!-- Top bar -->
+    <header class="sticky top-0 z-20 bg-paper-50/90 backdrop-blur border-b border-line">
+      <div class="w-full px-6">
+        <div class="h-16 flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <div class="h-7 w-7 rounded-xl border border-line bg-white shadow-sm grid place-items-center text-base">
+              🚀
+            </div>
+            <div class="flex items-baseline gap-3">
+              <div class="tracking-[0.16em] text-xs font-semibold text-ink-800">MISSION CONTROL</div>
+              <span class="text-[10px] tracking-[0.18em] uppercase text-ink-600 bg-chip-bg border border-chip-line rounded-full px-2 py-1">Snapshot</span>
+            </div>
+          </div>
+
+          <div class="header-stats hidden md:flex items-center gap-10">
+            <div class="text-center">
+              <div id="hdrAgentsActive" class="text-lg font-semibold leading-none">0</div>
+              <div class="text-[10px] tracking-[0.22em] uppercase text-ink-600">Agents Active</div>
+            </div>
+            <div class="text-center">
+              <div id="hdrTasksInQueue" class="text-lg font-semibold leading-none">0</div>
+              <div class="text-[10px] tracking-[0.22em] uppercase text-ink-600">Tasks in Queue</div>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <button id="newTaskBtn" class="hidden sm:block text-xs font-semibold bg-white border border-line rounded-full px-3 py-1.5 hover:bg-paper-200">New Task</button>
+            <button id="headerChatBtn" class="hidden sm:block text-xs font-semibold bg-white border border-line rounded-full px-3 py-1.5 hover:bg-paper-200">Chat</button>
+            <button id="healthBtn" class="hidden sm:block text-xs font-semibold bg-white border border-line rounded-full px-3 py-1.5 hover:bg-paper-200" title="Automation health">Health</button>
+            <button class="hidden sm:block text-xs font-semibold bg-chip-bg border border-chip-line rounded-full px-3 py-1.5 hover:bg-paper-200">Docs</button>
+            <div id="hdrClock" class="hidden sm:block text-xs font-semibold text-ink-700">--:--:--</div>
+            <button id="themeToggle" class="h-8 w-8 rounded-full bg-white border border-line grid place-items-center hover:bg-paper-200 transition-colors" title="Toggle dark mode">
+              <span id="themeIcon">🌙</span>
+            </button>
+            <button id="mobileMenuBtn" class="mobile-menu-btn h-8 w-8 rounded-full bg-white border border-line grid place-items-center hover:bg-paper-200" title="Menu">☰</button>
+            <div class="hidden sm:flex items-center gap-2 text-[10px] tracking-[0.18em] uppercase text-ink-700 bg-[#eef7f1] border border-[#cfe7d8] rounded-full px-3 py-1.5">
+              <span class="h-1.5 w-1.5 rounded-full bg-[#32a852]"></span>
+              Online
+            </div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- App shell -->
+    <main class="w-full px-4 sm:px-6 py-4 sm:py-6">
+      <div class="grid grid-cols-1 lg:grid-cols-[260px_1fr_320px] xl:grid-cols-[290px_1fr_360px] gap-4 lg:gap-6">
+
+        <!-- Left sidebar -->
+        <aside class="desktop-sidebar bg-paper-50 border border-line rounded-xl2 shadow-soft overflow-hidden order-2 lg:order-1">
+          <div class="px-5 py-4 border-b border-line flex items-center justify-between">
+            <div class="text-[11px] tracking-[0.22em] uppercase font-semibold text-ink-700">Agents</div>
+            <div id="agentsCount" class="text-[10px] text-ink-600 bg-chip-bg border border-chip-line rounded-full px-2 py-0.5">0</div>
+          </div>
+
+          <!-- Search -->
+          <div class="px-4 py-3 border-b border-line">
+            <div class="relative">
+              <input id="globalSearch" type="text" placeholder="Search tasks, comments..." 
+                class="w-full text-xs bg-white border border-line rounded-full px-3 py-2 pl-9 focus:outline-none focus:border-ink-600"/>
+              <span class="absolute left-3 top-2 text-ink-500">🔍</span>
+            </div>
+            <div id="searchResults" class="hidden mt-2 max-h-[300px] overflow-auto space-y-1"></div>
+          </div>
+
+          <div id="agentsList" class="p-3 space-y-2"></div>
+
+        </aside>
+
+        <!-- Center / kanban -->
+        <section class="bg-paper-50 border border-line rounded-xl2 shadow-soft overflow-hidden order-1 lg:order-2">
+          <div class="px-5 py-4 border-b border-line flex items-center justify-between">
+            <div>
+              <div class="text-[11px] tracking-[0.22em] uppercase font-semibold text-ink-700">Mission Queue</div>
+              <div class="mt-1 flex items-center gap-2 text-xs text-ink-600">
+                <span class="inline-flex items-center gap-2">
+                  <span class="h-1.5 w-1.5 rounded-full bg-[#c8b69c]"></span>
+                  <span id="mqNumber">1</span>
+                </span>
+                <span class="text-ink-600">•</span>
+                <span class="inline-flex items-center gap-2">
+                  <span id="mqActive" class="text-[10px] tracking-[0.18em] uppercase bg-chip-bg border border-chip-line rounded-full px-2 py-0.5">0 active</span>
+                  <span id="boardFilterLabel" class="text-[10px] tracking-[0.18em] uppercase text-ink-500"></span>
+                </span>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-2">
+              <button id="breakroomBtn" class="h-8 w-8 rounded-full bg-white border border-line grid place-items-center hover:bg-paper-200" title="Break room">💬</button>
+              <button id="boardAllBtn" class="text-[10px] tracking-[0.16em] uppercase bg-white border border-line rounded-full px-3 py-1.5 hover:bg-paper-200">All</button>
+              <button id="boardDueSoonBtn" class="text-[10px] tracking-[0.16em] uppercase bg-chip-bg border border-chip-line rounded-full px-3 py-1.5 hover:bg-paper-200">Due soon</button>
+              <button id="boardOverdueBtn" class="text-[10px] tracking-[0.16em] uppercase bg-chip-bg border border-chip-line rounded-full px-3 py-1.5 hover:bg-paper-200">Overdue</button>
+              <button id="quietModeBtn" class="text-[10px] tracking-[0.16em] uppercase bg-chip-bg border border-chip-line rounded-full px-3 py-1.5 hover:bg-paper-200" title="Quiet mode limits auto-actions">Quiet</button>
+              <button id="archivedBtn" class="h-8 w-8 rounded-full bg-white border border-line grid place-items-center hover:bg-paper-200" title="Archived tasks">📦</button>
+              <div class="h-8 w-8 rounded-full border border-line bg-chip-bg grid place-items-center text-ink-700 text-sm">⦿</div>
+            </div>
+          </div>
+
+          <!-- status tabs -->
+          <div class="px-5 py-3 border-b border-line">
+            <div class="grid grid-cols-5 gap-2 text-xs">
+              <div class="flex items-center justify-between rounded-full border border-line bg-white px-3 py-2">
+                <span class="uppercase tracking-[0.16em] text-[10px] text-ink-700">Inbox</span>
+                <span id="tabCount-inbox" class="text-[10px] text-ink-600 bg-chip-bg border border-chip-line rounded-full px-2 py-0.5">0</span>
+              </div>
+              <div class="flex items-center justify-between rounded-full border border-line bg-paper-100 px-3 py-2">
+                <span class="uppercase tracking-[0.16em] text-[10px] text-ink-700">Assigned</span>
+                <span id="tabCount-assigned" class="text-[10px] text-ink-600 bg-chip-bg border border-chip-line rounded-full px-2 py-0.5">0</span>
+              </div>
+              <div class="flex items-center justify-between rounded-full border border-line bg-paper-100 px-3 py-2">
+                <span class="uppercase tracking-[0.16em] text-[10px] text-ink-700">In Progress</span>
+                <span id="tabCount-in_progress" class="text-[10px] text-ink-600 bg-chip-bg border border-chip-line rounded-full px-2 py-0.5">0</span>
+              </div>
+              <div class="flex items-center justify-between rounded-full border border-line bg-paper-100 px-3 py-2">
+                <span class="uppercase tracking-[0.16em] text-[10px] text-ink-700">Review</span>
+                <span id="tabCount-review" class="text-[10px] text-ink-600 bg-chip-bg border border-chip-line rounded-full px-2 py-0.5">0</span>
+              </div>
+              <div class="flex items-center justify-between rounded-full border border-line bg-paper-100 px-3 py-2">
+                <span class="uppercase tracking-[0.16em] text-[10px] text-ink-700">Done</span>
+                <span id="tabCount-done" class="text-[10px] text-ink-600 bg-chip-bg border border-chip-line rounded-full px-2 py-0.5">0</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- kanban columns -->
+          <div class="p-3 sm:p-5 overflow-x-auto">
+            <div class="kanban-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-4 min-w-[600px] lg:min-w-0">
+              <!-- Column -->
+              <div class="rounded-xl2 border border-line bg-paper-100/70 overflow-hidden">
+                <div class="px-4 py-3 border-b border-line flex items-center justify-between">
+                  <div class="text-[10px] tracking-[0.22em] uppercase font-semibold text-ink-700">Inbox</div>
+                  <div id="count-inbox" class="text-[10px] text-ink-600 bg-chip-bg border border-chip-line rounded-full px-2 py-0.5">0</div>
+                </div>
+                <div id="col-inbox" class="p-3 space-y-3 min-h-[200px]">
+                  <article class="bg-white border border-line rounded-xl2 shadow-card p-4">
+                    <div class="text-sm font-semibold">Explore Product Dashboard & Docs</div>
+                    <p class="mt-2 text-xs text-ink-600 leading-relaxed">Thoroughly explore the entire dashboard. Capture what's working and what's missing.</p>
+                    <div class="mt-3 flex flex-wrap gap-1.5">
+                      <span class="text-[10px] uppercase tracking-[0.14em] bg-chip-bg border border-chip-line rounded-full px-2 py-1">research</span>
+                      <span class="text-[10px] uppercase tracking-[0.14em] bg-chip-bg border border-chip-line rounded-full px-2 py-1">documentation</span>
+                      <span class="text-[10px] uppercase tracking-[0.14em] bg-chip-bg border border-chip-line rounded-full px-2 py-1">site</span>
+                    </div>
+                    <div class="mt-4 flex items-center justify-between text-[11px] text-ink-600">
+                      <span class="inline-flex items-center gap-2">
+                        <span class="h-6 w-6 rounded-full border border-line bg-paper-100"></span>
+                        <span>Agent</span>
+                      </span>
+                      <span>1 day ago</span>
+                    </div>
+                  </article>
+
+                  <article class="bg-white border border-line rounded-xl2 shadow-card p-4">
+                    <div class="text-sm font-semibold">Conduct Pricing Audit Using Framework</div>
+                    <p class="mt-2 text-xs text-ink-600 leading-relaxed">Review pricing against competitors. Propose changes and rationale.</p>
+                    <div class="mt-3 flex flex-wrap gap-1.5">
+                      <span class="text-[10px] uppercase tracking-[0.14em] bg-chip-bg border border-chip-line rounded-full px-2 py-1">pricing</span>
+                      <span class="text-[10px] uppercase tracking-[0.14em] bg-chip-bg border border-chip-line rounded-full px-2 py-1">strategy</span>
+                    </div>
+                    <div class="mt-4 flex items-center justify-between text-[11px] text-ink-600">
+                      <span class="inline-flex items-center gap-2">
+                        <span class="h-6 w-6 rounded-full border border-line bg-paper-100"></span>
+                        <span>Agent</span>
+                      </span>
+                      <span>2 hrs ago</span>
+                    </div>
+                  </article>
+
+                  <article class="bg-white border border-line rounded-xl2 shadow-card p-4">
+                    <div class="text-sm font-semibold">Design Expansion Revenue Mechanics</div>
+                    <p class="mt-2 text-xs text-ink-600 leading-relaxed">Implement a "cheat code" style expansion mechanic for SaaS.</p>
+                    <div class="mt-3 flex flex-wrap gap-1.5">
+                      <span class="text-[10px] uppercase tracking-[0.14em] bg-chip-bg border border-chip-line rounded-full px-2 py-1">product</span>
+                      <span class="text-[10px] uppercase tracking-[0.14em] bg-chip-bg border border-chip-line rounded-full px-2 py-1">growth</span>
+                    </div>
+                    <div class="mt-4 flex items-center justify-between text-[11px] text-ink-600">
+                      <span class="inline-flex items-center gap-2">
+                        <span class="h-6 w-6 rounded-full border border-line bg-paper-100"></span>
+                        <span>Agent</span>
+                      </span>
+                      <span>5 hrs ago</span>
+                    </div>
+                  </article>
+                </div>
+              </div>
+
+              <!-- Column -->
+              <div class="rounded-xl2 border border-line bg-paper-100/70 overflow-hidden">
+                <div class="px-4 py-3 border-b border-line flex items-center justify-between">
+                  <div class="text-[10px] tracking-[0.22em] uppercase font-semibold text-ink-700">Assigned</div>
+                  <div id="count-assigned" class="text-[10px] text-ink-600 bg-chip-bg border border-chip-line rounded-full px-2 py-0.5">0</div>
+                </div>
+                <div id="col-assigned" class="p-3 space-y-3 min-h-[200px]">
+                  <article class="bg-white border border-line rounded-xl2 shadow-card p-4">
+                    <div class="text-sm font-semibold">Product Demo Video Script</div>
+                    <p class="mt-2 text-xs text-ink-600 leading-relaxed">Create a full script for a product demo video with clear steps.</p>
+                    <div class="mt-3 flex flex-wrap gap-1.5">
+                      <span class="text-[10px] uppercase tracking-[0.14em] bg-chip-bg border border-chip-line rounded-full px-2 py-1">video</span>
+                      <span class="text-[10px] uppercase tracking-[0.14em] bg-chip-bg border border-chip-line rounded-full px-2 py-1">content</span>
+                      <span class="text-[10px] uppercase tracking-[0.14em] bg-chip-bg border border-chip-line rounded-full px-2 py-1">demo</span>
+                    </div>
+                    <div class="mt-4 flex items-center justify-between text-[11px] text-ink-600">
+                      <span class="inline-flex items-center gap-2">
+                        <span class="h-6 w-6 rounded-full border border-line bg-paper-100"></span>
+                        <span>Agent</span>
+                      </span>
+                      <span>1 day ago</span>
+                    </div>
+                  </article>
+
+                  <article class="bg-white border border-line rounded-xl2 shadow-card p-4">
+                    <div class="text-sm font-semibold">Tweet Content (Real Stories)</div>
+                    <p class="mt-2 text-xs text-ink-600 leading-relaxed">Write authentic tweets based on customer data and real outcomes.</p>
+                    <div class="mt-3 flex flex-wrap gap-1.5">
+                      <span class="text-[10px] uppercase tracking-[0.14em] bg-chip-bg border border-chip-line rounded-full px-2 py-1">social</span>
+                      <span class="text-[10px] uppercase tracking-[0.14em] bg-chip-bg border border-chip-line rounded-full px-2 py-1">twitter</span>
+                      <span class="text-[10px] uppercase tracking-[0.14em] bg-chip-bg border border-chip-line rounded-full px-2 py-1">content</span>
+                    </div>
+                    <div class="mt-4 flex items-center justify-between text-[11px] text-ink-600">
+                      <span class="inline-flex items-center gap-2">
+                        <span class="h-6 w-6 rounded-full border border-line bg-paper-100"></span>
+                        <span>Agent</span>
+                      </span>
+                      <span>8 hrs ago</span>
+                    </div>
+                  </article>
+
+                  <article class="bg-white border border-line rounded-xl2 shadow-card p-4">
+                    <div class="text-sm font-semibold">Customer Research - Tweet Material</div>
+                    <p class="mt-2 text-xs text-ink-600 leading-relaxed">Pull real customer stories and insights for content creation.</p>
+                    <div class="mt-3 flex flex-wrap gap-1.5">
+                      <span class="text-[10px] uppercase tracking-[0.14em] bg-chip-bg border border-chip-line rounded-full px-2 py-1">research</span>
+                      <span class="text-[10px] uppercase tracking-[0.14em] bg-chip-bg border border-chip-line rounded-full px-2 py-1">insights</span>
+                    </div>
+                    <div class="mt-4 flex items-center justify-between text-[11px] text-ink-600">
+                      <span class="inline-flex items-center gap-2">
+                        <span class="h-6 w-6 rounded-full border border-line bg-paper-100"></span>
+                        <span>Agent</span>
+                      </span>
+                      <span>3 hrs ago</span>
+                    </div>
+                  </article>
+                </div>
+              </div>
+
+              <!-- Column -->
+              <div class="rounded-xl2 border border-line bg-paper-100/70 overflow-hidden">
+                <div class="px-4 py-3 border-b border-line flex items-center justify-between">
+                  <div class="text-[10px] tracking-[0.22em] uppercase font-semibold text-ink-700">In Progress</div>
+                  <div id="count-in_progress" class="text-[10px] text-ink-600 bg-chip-bg border border-chip-line rounded-full px-2 py-0.5">0</div>
+                </div>
+                <div id="col-in_progress" class="p-3 space-y-3 min-h-[200px]">
+                  <article class="bg-white border border-line rounded-xl2 shadow-card p-4">
+                    <div class="text-sm font-semibold">SiteGPT vs Zendesk AI Comparison</div>
+                    <p class="mt-2 text-xs text-ink-600 leading-relaxed">Create detailed brief comparing features, pricing, and positioning.</p>
+                    <div class="mt-3 flex flex-wrap gap-1.5">
+                      <span class="text-[10px] uppercase tracking-[0.14em] bg-chip-bg border border-chip-line rounded-full px-2 py-1">vision</span>
+                      <span class="text-[10px] uppercase tracking-[0.14em] bg-chip-bg border border-chip-line rounded-full px-2 py-1">competitor</span>
+                      <span class="text-[10px] uppercase tracking-[0.14em] bg-chip-bg border border-chip-line rounded-full px-2 py-1">seo</span>
+                    </div>
+                    <div class="mt-4 flex items-center justify-between text-[11px] text-ink-600">
+                      <span class="inline-flex items-center gap-2">
+                        <span class="h-6 w-6 rounded-full border border-line bg-paper-100"></span>
+                        <span>Agent</span>
+                      </span>
+                      <span>1 day ago</span>
+                    </div>
+                  </article>
+
+                  <article class="bg-white border border-line rounded-xl2 shadow-card p-4">
+                    <div class="text-sm font-semibold">Mission Control UI</div>
+                    <p class="mt-2 text-xs text-ink-600 leading-relaxed">Build the real-time agent command center with a clean layout.</p>
+                    <div class="mt-3 flex flex-wrap gap-1.5">
+                      <span class="text-[10px] uppercase tracking-[0.14em] bg-chip-bg border border-chip-line rounded-full px-2 py-1">internal</span>
+                      <span class="text-[10px] uppercase tracking-[0.14em] bg-chip-bg border border-chip-line rounded-full px-2 py-1">tooling</span>
+                      <span class="text-[10px] uppercase tracking-[0.14em] bg-chip-bg border border-chip-line rounded-full px-2 py-1">ui</span>
+                    </div>
+                    <div class="mt-4 flex items-center justify-between text-[11px] text-ink-600">
+                      <span class="inline-flex items-center gap-2">
+                        <span class="h-6 w-6 rounded-full border border-line bg-paper-100"></span>
+                        <span>Agent</span>
+                      </span>
+                      <span>1 day ago</span>
+                    </div>
+                  </article>
+
+                  <article class="bg-white border border-line rounded-xl2 shadow-card p-4">
+                    <div class="text-sm font-semibold">Mine Sybil Call Recordings</div>
+                    <p class="mt-2 text-xs text-ink-600 leading-relaxed">Extract insights and patterns from call transcripts and notes.</p>
+                    <div class="mt-3 flex flex-wrap gap-1.5">
+                      <span class="text-[10px] uppercase tracking-[0.14em] bg-chip-bg border border-chip-line rounded-full px-2 py-1">research</span>
+                      <span class="text-[10px] uppercase tracking-[0.14em] bg-chip-bg border border-chip-line rounded-full px-2 py-1">insights</span>
+                    </div>
+                    <div class="mt-4 flex items-center justify-between text-[11px] text-ink-600">
+                      <span class="inline-flex items-center gap-2">
+                        <span class="h-6 w-6 rounded-full border border-line bg-paper-100"></span>
+                        <span>Agent</span>
+                      </span>
+                      <span>8 hrs ago</span>
+                    </div>
+                  </article>
+                </div>
+              </div>
+
+              <!-- Column -->
+              <div class="rounded-xl2 border border-line bg-paper-100/70 overflow-hidden">
+                <div class="px-4 py-3 border-b border-line flex items-center justify-between">
+                  <div class="text-[10px] tracking-[0.22em] uppercase font-semibold text-ink-700">Review</div>
+                  <div id="count-review" class="text-[10px] text-ink-600 bg-chip-bg border border-chip-line rounded-full px-2 py-0.5">0</div>
+                </div>
+                <div id="col-review" class="p-3 space-y-3 min-h-[200px]">
+                  <article class="bg-white border border-line rounded-xl2 shadow-card p-4">
+                    <div class="text-sm font-semibold">Shopify Blog Landing Page</div>
+                    <p class="mt-2 text-xs text-ink-600 leading-relaxed">Write copy for a Shopify integration landing page. Keep it crisp.</p>
+                    <div class="mt-3 flex flex-wrap gap-1.5">
+                      <span class="text-[10px] uppercase tracking-[0.14em] bg-chip-bg border border-chip-line rounded-full px-2 py-1">copy</span>
+                      <span class="text-[10px] uppercase tracking-[0.14em] bg-chip-bg border border-chip-line rounded-full px-2 py-1">landing</span>
+                      <span class="text-[10px] uppercase tracking-[0.14em] bg-chip-bg border border-chip-line rounded-full px-2 py-1">shopify</span>
+                    </div>
+                    <div class="mt-4 flex items-center justify-between text-[11px] text-ink-600">
+                      <span class="inline-flex items-center gap-2">
+                        <span class="h-6 w-6 rounded-full border border-line bg-paper-100"></span>
+                        <span>Agent</span>
+                      </span>
+                      <span>1 day ago</span>
+                    </div>
+                  </article>
+
+                  <article class="bg-white border border-line rounded-xl2 shadow-card p-4">
+                    <div class="text-sm font-semibold">Best AI Chatbot for Shopify</div>
+                    <p class="mt-2 text-xs text-ink-600 leading-relaxed">Create a helpful post comparing chatbots for 2026 use cases.</p>
+                    <div class="mt-3 flex flex-wrap gap-1.5">
+                      <span class="text-[10px] uppercase tracking-[0.14em] bg-chip-bg border border-chip-line rounded-full px-2 py-1">blog</span>
+                      <span class="text-[10px] uppercase tracking-[0.14em] bg-chip-bg border border-chip-line rounded-full px-2 py-1">seo</span>
+                      <span class="text-[10px] uppercase tracking-[0.14em] bg-chip-bg border border-chip-line rounded-full px-2 py-1">shopify</span>
+                    </div>
+                    <div class="mt-4 flex items-center justify-between text-[11px] text-ink-600">
+                      <span class="inline-flex items-center gap-2">
+                        <span class="h-6 w-6 rounded-full border border-line bg-paper-100"></span>
+                        <span>Agent</span>
+                      </span>
+                      <span>2 days ago</span>
+                    </div>
+                  </article>
+                </div>
+              </div>
+
+              <!-- Column -->
+              <div class="rounded-xl2 border border-line bg-paper-100/70 overflow-hidden">
+                <div class="px-4 py-3 border-b border-line flex items-center justify-between">
+                  <div class="text-[10px] tracking-[0.22em] uppercase font-semibold text-ink-700">Done</div>
+                  <div id="count-done" class="text-[10px] text-ink-600 bg-chip-bg border border-chip-line rounded-full px-2 py-0.5">0</div>
+                </div>
+                <div id="col-done" class="p-3 space-y-3 min-h-[200px]"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Right sidebar -->
+        <aside class="right-sidebar bg-paper-50 border border-line rounded-xl2 shadow-soft overflow-hidden order-3">
+          <div class="px-5 py-4 border-b border-line flex items-center justify-between">
+            <div class="text-[11px] tracking-[0.22em] uppercase font-semibold text-ink-700">Live Feed</div>
+            <div class="flex items-center gap-2">
+              <button id="newDecisionBtn" class="h-8 w-8 rounded-full bg-white border border-line grid place-items-center hover:bg-paper-200" title="Add decision">🧠</button>
+              <button id="newDocBtn" class="h-8 w-8 rounded-full bg-white border border-line grid place-items-center hover:bg-paper-200" title="Add doc note">📄</button>
+              <div class="text-[10px] text-ink-600 bg-chip-bg border border-chip-line rounded-full px-2 py-0.5">Live</div>
+            </div>
+          </div>
+
+          <div class="p-4 space-y-4">
+            <!-- filter pills -->
+            <div id="feedKindBar" class="flex flex-wrap gap-2">
+              <button class="feedKindBtn text-[10px] tracking-[0.16em] uppercase bg-white border border-line rounded-full px-3 py-1.5" data-kind="all">All</button>
+              <button class="feedKindBtn text-[10px] tracking-[0.16em] uppercase bg-chip-bg border border-chip-line rounded-full px-3 py-1.5" data-kind="tasks">Tasks</button>
+              <button class="feedKindBtn text-[10px] tracking-[0.16em] uppercase bg-chip-bg border border-chip-line rounded-full px-3 py-1.5" data-kind="comments">Comments</button>
+              <button class="feedKindBtn text-[10px] tracking-[0.16em] uppercase bg-chip-bg border border-chip-line rounded-full px-3 py-1.5" data-kind="decisions">Decisions</button>
+              <button class="feedKindBtn text-[10px] tracking-[0.16em] uppercase bg-chip-bg border border-chip-line rounded-full px-3 py-1.5" data-kind="docs">Docs</button>
+              <button class="feedKindBtn text-[10px] tracking-[0.16em] uppercase bg-chip-bg border border-chip-line rounded-full px-3 py-1.5" data-kind="status">Status</button>
+              <button class="feedKindBtn text-[10px] tracking-[0.16em] uppercase bg-chip-bg border border-chip-line rounded-full px-3 py-1.5" data-kind="chat">Chat</button>
+            </div>
+
+            <!-- agents chips -->
+            <div class="rounded-xl2 border border-line bg-white p-3">
+              <div class="flex items-center justify-between">
+                <div class="text-[10px] tracking-[0.22em] uppercase font-semibold text-ink-700">Agents</div>
+                <div id="rightAgentsCount" class="text-[10px] text-ink-600 bg-chip-bg border border-chip-line rounded-full px-2 py-0.5">0</div>
+              </div>
+              <div id="rightAgentsChips" class="mt-3 flex flex-wrap gap-2"></div>
+              <div id="feedAgentHint" class="mt-3 text-xs text-ink-600 hidden"></div>
+            </div>
+
+            <!-- feed list (rendered from state.activities) -->
+            <div id="feedList" class="space-y-3"></div>
+          </div>
+        </aside>
+
+      </div>
+    </main>
+  </div>
+
+  <!-- Modals (Stage 2) -->
+  <div id="modalBackdrop" class="hidden fixed inset-0 z-50 bg-black/30"></div>
+
+  <!-- Task Detail Drawer (slides in from right, full height) -->
+  <div id="taskModal" class="hidden fixed inset-0 z-50">
+    <div class="absolute inset-0">
+      <div id="taskModalPanel" class="modal-panel absolute right-0 top-0 h-full w-full sm:w-[520px] max-w-full sm:max-w-[92vw] bg-white border-l border-line shadow-soft overflow-hidden transform translate-x-full transition-transform duration-300 ease-out">
+        <!-- Header strip -->
+        <div class="px-6 py-5 border-b border-line flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="h-2 w-2 rounded-full bg-[#3b82f6]"></span>
+            <div class="text-[11px] tracking-[0.22em] uppercase font-semibold text-ink-700">Task Detail</div>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="taskDeleteBtn" class="text-xs font-semibold bg-white border border-line rounded-full px-3 py-2 hover:bg-paper-200">Archive</button>
+            <button id="taskModalClose" class="text-ink-600 hover:text-ink-800 text-xl leading-none">×</button>
+          </div>
+        </div>
+
+        <!-- Scrollable content -->
+        <div class="h-[calc(100vh-72px)] overflow-auto bg-[#fafafa] px-6 py-6">
+          <div id="taskModalTitle" class="text-3xl font-semibold text-ink-900">-</div>
+          <div id="taskModalDue" class="mt-2 text-xs text-ink-600">-</div>
+
+          <!-- badges/tags row -->
+          <div class="mt-5 flex flex-wrap items-center gap-2">
+            <span id="taskModalStatusPill" class="text-[11px] uppercase tracking-[0.16em] rounded-full px-4 py-2">-</span>
+            <span id="taskModalPriorityPill" class="text-[11px] uppercase tracking-[0.16em] rounded-full px-4 py-2">-</span>
+            <div id="taskModalTags" class="flex flex-wrap gap-2"></div>
+          </div>
+
+          <!-- Description -->
+          <div class="mt-8">
+            <div class="text-[11px] tracking-[0.22em] uppercase text-ink-500">Description</div>
+            <div id="taskModalDesc" class="mt-3 text-sm text-ink-800 leading-relaxed whitespace-pre-wrap">-</div>
+          </div>
+
+          <!-- Comments area -->
+          <div class="mt-10">
+            <div class="text-[11px] tracking-[0.22em] uppercase text-ink-500">Agent Comments</div>
+
+            <form id="taskModalCommentForm" class="mt-4">
+              <div class="flex gap-2">
+                <input id="taskModalComment" class="flex-1 text-xs bg-white border border-line rounded-full px-3 py-2" placeholder="Write a comment… (use @agent to mention)" />
+                <button class="text-xs font-semibold bg-white border border-line rounded-full px-4 py-2 hover:bg-paper-200" type="submit">Send</button>
+              </div>
+            </form>
+
+            <div id="taskModalComments" class="mt-4 space-y-3"></div>
+          </div>
+
+          <!-- Assignee section (bottom) -->
+          <div class="mt-10 pb-4">
+            <div class="text-[11px] tracking-[0.22em] uppercase text-ink-500">Assignee</div>
+            <div id="taskModalAssigneeCard" class="mt-4 rounded-xl2 border border-line bg-white p-4 flex items-center gap-3">
+              <div class="h-11 w-11 rounded-xl bg-paper-100 border border-line grid place-items-center text-lg">👤</div>
+              <div class="min-w-0">
+                <div class="text-sm font-semibold" id="taskModalAssigneeName">Unassigned</div>
+                <div class="text-xs text-ink-600" id="taskModalAssigneeRole">-</div>
+              </div>
+              <div class="ml-auto flex items-center gap-2">
+                <select id="taskModalStatus" class="text-xs bg-white border border-line rounded-full px-3 py-2">
+                  <option value="inbox">Inbox</option>
+                  <option value="assigned">Assigned</option>
+                  <option value="in_progress">In Progress</option>
+                  <option value="review">Review</option>
+                  <option value="done">Done</option>
+                  <option value="blocked">Blocked</option>
+                  <option value="archived">Archived</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Approval -->
+            <div class="mt-4 bg-white border border-line rounded-xl2 p-4">
+              <div class="flex items-center justify-between">
+                <div class="text-[10px] tracking-[0.22em] uppercase text-ink-600">Needs approval</div>
+                <label class="inline-flex items-center gap-2 text-xs">
+                  <input id="taskNeedsApproval" type="checkbox" class="accent-black" />
+                  <span>On</span>
+                </label>
+              </div>
+              <div class="mt-3 flex items-center justify-end gap-2">
+                <button id="taskRequestApproval" class="text-xs font-semibold bg-chip-bg border border-chip-line rounded-full px-4 py-2 hover:bg-paper-200" type="button">Request approval</button>
+                <button id="taskApprove" class="text-xs font-semibold bg-white border border-line rounded-full px-4 py-2 hover:bg-paper-200" type="button">Approve</button>
+              </div>
+            </div>
+
+            <!-- Checklist -->
+            <div class="mt-4 bg-white border border-line rounded-xl2 p-4">
+              <div class="text-[10px] tracking-[0.22em] uppercase text-ink-600">Checklist</div>
+              <div id="taskChecklist" class="mt-3 space-y-2"></div>
+              <div class="mt-3 flex gap-2">
+                <input id="taskChecklistNew" class="flex-1 text-xs bg-paper-50 border border-line rounded-full px-3 py-2" placeholder="Add checklist item…" />
+                <button id="taskChecklistAdd" class="text-xs font-semibold bg-white border border-line rounded-full px-4 py-2 hover:bg-paper-200" type="button">Add</button>
+              </div>
+            </div>
+
+            <!-- Done guardrail (requires completion summary) -->
+            <div id="doneGuardrail" class="hidden mt-4 bg-[#fff7ed] border border-[#fed7aa] rounded-xl2 p-4">
+              <div class="text-[11px] tracking-[0.22em] uppercase text-[#9a3412]">Completion summary required</div>
+              <div class="mt-2 text-xs text-ink-700">When marking a task as Done, add a quick summary of what was done and any outputs/links.</div>
+              <textarea id="doneSummary" class="mt-3 w-full text-sm bg-white border border-line rounded-xl px-4 py-3 min-h-[110px]" placeholder="✅ Completed\n- What I did:\n- Output/links:\n- Notes/follow-ups:\n- Confidence:"></textarea>
+              <div class="mt-3 flex items-center justify-end gap-2">
+                <button id="doneCancel" class="text-xs font-semibold bg-chip-bg border border-chip-line rounded-full px-4 py-2 hover:bg-paper-200" type="button">Cancel</button>
+                <button id="doneConfirm" class="text-xs font-semibold bg-white border border-line rounded-full px-4 py-2 hover:bg-paper-200" type="button">Post summary + Mark Done</button>
+              </div>
+            </div>
+
+            <div class="mt-4 flex flex-wrap gap-2">
+              <button id="assignApollo" class="text-xs font-semibold bg-chip-bg border border-chip-line rounded-full px-4 py-2 hover:bg-paper-200">Assign Apollo</button>
+              <button id="assignArtemis" class="text-xs font-semibold bg-chip-bg border border-chip-line rounded-full px-4 py-2 hover:bg-paper-200">Assign Artemis</button>
+              <button id="assignAres" class="text-xs font-semibold bg-chip-bg border border-chip-line rounded-full px-4 py-2 hover:bg-paper-200">Assign Ares</button>
+              <button id="assignPrometheus" class="text-xs font-semibold bg-chip-bg border border-chip-line rounded-full px-4 py-2 hover:bg-paper-200">Assign Prometheus</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- New Task Drawer (slides in from right, full height) -->
+  <div id="newTaskModal" class="hidden fixed inset-0 z-50">
+    <div class="absolute inset-0">
+      <div id="newTaskPanel" class="modal-panel absolute right-0 top-0 h-full w-full sm:w-[520px] max-w-full sm:max-w-[92vw] bg-white border-l border-line shadow-soft overflow-hidden transform translate-x-full transition-transform duration-300 ease-out">
+        <!-- Header strip -->
+        <div class="px-6 py-5 border-b border-line flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="h-2 w-2 rounded-full bg-[#3b82f6]"></span>
+            <div class="text-[11px] tracking-[0.22em] uppercase font-semibold text-ink-700">New Task</div>
+          </div>
+          <button id="newTaskClose" class="text-ink-600 hover:text-ink-800 text-xl leading-none">×</button>
+        </div>
+
+        <form id="newTaskForm" class="h-[calc(100vh-72px)] overflow-auto bg-[#fafafa] px-6 py-6 space-y-4">
+          <div>
+            <div class="text-[11px] tracking-[0.22em] uppercase text-ink-500">Title</div>
+            <input id="newTaskTitle" class="mt-2 w-full text-sm bg-white border border-line rounded-xl px-4 py-3" placeholder="Task title" required />
+            <div id="newTaskSimilar" class="mt-3 hidden"></div>
+          </div>
+
+          <div>
+            <div class="text-[11px] tracking-[0.22em] uppercase text-ink-500">Description</div>
+            <textarea id="newTaskDesc" class="mt-2 w-full text-sm bg-white border border-line rounded-xl px-4 py-3 min-h-[160px]" placeholder="Description"></textarea>
+          </div>
+
+          <div class="grid grid-cols-3 gap-2">
+            <div>
+              <div class="text-[11px] tracking-[0.22em] uppercase text-ink-500">Status</div>
+              <select id="newTaskStatus" class="mt-2 w-full text-xs bg-white border border-line rounded-full px-3 py-2">
+                <option value="inbox">Inbox</option>
+                <option value="assigned">Assigned</option>
+                <option value="in_progress">In Progress</option>
+                <option value="review">Review</option>
+                <option value="done">Done</option>
+                <option value="blocked">Blocked</option>
+              </select>
+            </div>
+            <div>
+              <div class="text-[11px] tracking-[0.22em] uppercase text-ink-500">Assignee</div>
+              <select id="newTaskAssignee" class="mt-2 w-full text-xs bg-white border border-line rounded-full px-3 py-2">
+                <option value="">Unassigned</option>
+                <option value="zeus">Zeus</option>
+                <option value="hermes">Hermes</option>
+                <option value="apollo">Apollo</option>
+                <option value="artemis">Artemis</option>
+                <option value="ares">Ares</option>
+                <option value="prometheus">Prometheus</option>
+              </select>
+            </div>
+            <div>
+              <div class="text-[11px] tracking-[0.22em] uppercase text-ink-500">Priority</div>
+              <select id="newTaskPriority" class="mt-2 w-full text-xs bg-white border border-line rounded-full px-3 py-2">
+                <option value="1">Low</option>
+                <option value="2" selected>Medium</option>
+                <option value="3">High</option>
+                <option value="4">Critical</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="pt-2 flex justify-end">
+            <button class="text-xs font-semibold bg-white border border-line rounded-full px-5 py-2.5 hover:bg-paper-200" type="submit">Create</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Doc Note Drawer -->
+  <div id="docModal" class="hidden fixed inset-0 z-50">
+    <div class="absolute inset-0">
+      <div id="docModalPanel" class="modal-panel absolute right-0 top-0 h-full w-full sm:w-[520px] max-w-full sm:max-w-[92vw] bg-white border-l border-line shadow-soft overflow-hidden transform translate-x-full transition-transform duration-300 ease-out">
+        <div class="px-6 py-5 border-b border-line flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="h-2 w-2 rounded-full bg-[#2563eb]"></span>
+            <div class="text-[11px] tracking-[0.22em] uppercase font-semibold text-ink-700">Doc Note</div>
+          </div>
+          <button id="docModalClose" class="text-ink-600 hover:text-ink-800 text-xl leading-none">×</button>
+        </div>
+
+        <form id="docForm" class="h-[calc(100vh-72px)] overflow-auto bg-[#fafafa] px-6 py-6 space-y-4">
+          <div>
+            <div class="text-[11px] tracking-[0.22em] uppercase text-ink-500">Template</div>
+            <select id="docTemplate" class="mt-2 w-full text-xs bg-white border border-line rounded-full px-3 py-2">
+              <option value="blank" selected>Blank</option>
+              <option value="runbook">Runbook (How-to)</option>
+              <option value="howitworks">How it works</option>
+              <option value="policy">Policy / Convention</option>
+            </select>
+          </div>
+          <div>
+            <div class="text-[11px] tracking-[0.22em] uppercase text-ink-500">Title (optional)</div>
+            <input id="docTitle" class="mt-2 w-full text-sm bg-white border border-line rounded-xl px-4 py-3" placeholder="e.g. How we run agents" />
+          </div>
+          <div>
+            <div class="text-[11px] tracking-[0.22em] uppercase text-ink-500">Note</div>
+            <textarea id="docBody" class="mt-2 w-full text-sm bg-white border border-line rounded-xl px-4 py-3 min-h-[180px]" placeholder="Write the note…" required></textarea>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <div class="text-[11px] tracking-[0.22em] uppercase text-ink-500">By</div>
+              <select id="docBy" class="mt-2 w-full text-xs bg-white border border-line rounded-full px-3 py-2">
+                <option value="jarvis" selected>JARVIS</option>
+                <option value="zeus">ZEUS</option>
+                <option value="hermes">HERMES</option>
+                <option value="apollo">APOLLO</option>
+                <option value="artemis">ARTEMIS</option>
+                <option value="ares">ARES</option>
+                <option value="prometheus">PROMETHEUS</option>
+              </select>
+            </div>
+          </div>
+          <div class="pt-2 flex justify-end">
+            <button class="text-xs font-semibold bg-white border border-line rounded-full px-5 py-2.5 hover:bg-paper-200" type="submit">Add</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Decision Drawer -->
+  <div id="decisionModal" class="hidden fixed inset-0 z-50">
+    <div class="absolute inset-0">
+      <div id="decisionModalPanel" class="modal-panel absolute right-0 top-0 h-full w-full sm:w-[520px] max-w-full sm:max-w-[92vw] bg-white border-l border-line shadow-soft overflow-hidden transform translate-x-full transition-transform duration-300 ease-out">
+        <div class="px-6 py-5 border-b border-line flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="h-2 w-2 rounded-full bg-[#b45309]"></span>
+            <div class="text-[11px] tracking-[0.22em] uppercase font-semibold text-ink-700">Decision</div>
+          </div>
+          <button id="decisionModalClose" class="text-ink-600 hover:text-ink-800 text-xl leading-none">×</button>
+        </div>
+
+        <form id="decisionForm" class="h-[calc(100vh-72px)] overflow-auto bg-[#fafafa] px-6 py-6 space-y-4">
+          <div>
+            <div class="text-[11px] tracking-[0.22em] uppercase text-ink-500">Template</div>
+            <select id="decisionTemplate" class="mt-2 w-full text-xs bg-white border border-line rounded-full px-3 py-2">
+              <option value="blank" selected>Blank</option>
+              <option value="standard">Standard decision</option>
+              <option value="reversible">Reversible decision</option>
+              <option value="architecture">Architecture decision</option>
+            </select>
+          </div>
+          <div>
+            <div class="text-[11px] tracking-[0.22em] uppercase text-ink-500">Title (optional)</div>
+            <input id="decisionTitle" class="mt-2 w-full text-sm bg-white border border-line rounded-xl px-4 py-3" placeholder="e.g. Use drawers for modals" />
+          </div>
+          <div>
+            <div class="text-[11px] tracking-[0.22em] uppercase text-ink-500">Decision</div>
+            <textarea id="decisionBody" class="mt-2 w-full text-sm bg-white border border-line rounded-xl px-4 py-3 min-h-[180px]" placeholder="Write the decision…" required></textarea>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <div class="text-[11px] tracking-[0.22em] uppercase text-ink-500">By</div>
+              <select id="decisionBy" class="mt-2 w-full text-xs bg-white border border-line rounded-full px-3 py-2">
+                <option value="jarvis" selected>JARVIS</option>
+                <option value="zeus">ZEUS</option>
+                <option value="hermes">HERMES</option>
+                <option value="apollo">APOLLO</option>
+                <option value="artemis">ARTEMIS</option>
+                <option value="ares">ARES</option>
+                <option value="prometheus">PROMETHEUS</option>
+              </select>
+            </div>
+          </div>
+          <div class="pt-2 flex justify-end">
+            <button class="text-xs font-semibold bg-white border border-line rounded-full px-5 py-2.5 hover:bg-paper-200" type="submit">Add</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Break Room Drawer -->
+  <div id="breakroomModal" class="hidden fixed inset-0 z-50">
+    <div class="absolute inset-0">
+      <div id="breakroomModalPanel" class="modal-panel absolute right-0 top-0 h-full w-full sm:w-[520px] max-w-full sm:max-w-[92vw] bg-white border-l border-line shadow-soft overflow-hidden transform translate-x-full transition-transform duration-300 ease-out">
+        <div class="px-6 py-5 border-b border-line flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="h-2 w-2 rounded-full bg-[#10b981]"></span>
+            <div class="text-[11px] tracking-[0.22em] uppercase font-semibold text-ink-700">Break Room</div>
+          </div>
+          <button id="breakroomModalClose" class="text-ink-600 hover:text-ink-800 text-xl leading-none">×</button>
+        </div>
+
+        <div class="h-[calc(100vh-72px)] flex flex-col bg-[#fafafa]">
+          <div id="breakroomList" class="flex-1 overflow-auto px-6 py-6 space-y-3"></div>
+          <div class="border-t border-line bg-white px-6 py-4">
+            <div class="text-xs text-ink-600">Type a message (use @agent to mention). Agents can chat too (rate-limited).</div>
+            <form id="breakroomForm" class="mt-3 flex gap-2">
+              <input id="breakroomText" class="flex-1 text-sm bg-paper-50 border border-line rounded-full px-4 py-3" placeholder="Say something…" />
+              <button class="text-xs font-semibold bg-white border border-line rounded-full px-5 py-2.5 hover:bg-paper-200" type="submit">Send</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Archived Tasks Drawer -->
+  <div id="archivedModal" class="hidden fixed inset-0 z-50">
+    <div class="absolute inset-0">
+      <div id="archivedModalPanel" class="modal-panel absolute right-0 top-0 h-full w-full sm:w-[520px] max-w-full sm:max-w-[92vw] bg-white border-l border-line shadow-soft overflow-hidden transform translate-x-full transition-transform duration-300 ease-out">
+        <div class="px-6 py-5 border-b border-line flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="h-2 w-2 rounded-full bg-[#6b7280]"></span>
+            <div class="text-[11px] tracking-[0.22em] uppercase font-semibold text-ink-700">Archived Tasks</div>
+          </div>
+          <button id="archivedModalClose" class="text-ink-600 hover:text-ink-800 text-xl leading-none">×</button>
+        </div>
+
+        <div class="h-[calc(100vh-72px)] overflow-auto bg-[#fafafa] px-6 py-6">
+          <div>
+            <div class="text-[11px] tracking-[0.22em] uppercase text-ink-500">Search</div>
+            <input id="archivedSearch" class="mt-2 w-full text-sm bg-white border border-line rounded-xl px-4 py-3" placeholder="Search archived tasks…" />
+          </div>
+
+          <div class="mt-4 flex items-center justify-between text-xs text-ink-600">
+            <div id="archivedCount">0</div>
+            <button id="archivedClear" class="text-xs font-semibold bg-white border border-line rounded-full px-4 py-2 hover:bg-paper-200">Clear</button>
+          </div>
+
+          <div id="archivedList" class="mt-4 space-y-3"></div>
+
+          <div class="mt-6 text-xs text-ink-600">
+            Tip: Click a task to view it. Use <b>Restore</b> to bring it back to the board, or <b>Duplicate</b> to create a new task from it.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Agent Profile Drawer -->
+  <div id="agentModal" class="hidden fixed inset-0 z-50">
+    <div class="absolute inset-0">
+      <div id="agentModalPanel" class="modal-panel absolute right-0 top-0 h-full w-full sm:w-[520px] max-w-full sm:max-w-[92vw] bg-white border-l border-line shadow-soft overflow-hidden transform translate-x-full transition-transform duration-300 ease-out">
+        <div class="px-6 py-5 border-b border-line flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="h-2 w-2 rounded-full bg-[#b45309]"></span>
+            <div class="text-[11px] tracking-[0.22em] uppercase font-semibold text-ink-700">Agent Profile</div>
+          </div>
+          <button id="agentModalClose" class="text-ink-600 hover:text-ink-800 text-xl leading-none">×</button>
+        </div>
+
+        <div class="h-[calc(100vh-72px)] overflow-auto bg-[#fafafa] px-6 py-6">
+          <div class="flex items-center gap-4">
+            <div class="h-14 w-14 rounded-2xl bg-paper-100 border border-line grid place-items-center text-2xl" id="agentModalAvatar">🧑‍💻</div>
+            <div class="min-w-0">
+              <div id="agentModalName" class="text-3xl font-semibold text-ink-900">-</div>
+              <div id="agentModalRole" class="text-sm text-ink-600">-</div>
+              <div class="mt-2">
+                <span id="agentModalLevel" class="inline-flex items-center text-xs bg-[#f6e7d6] text-[#8a6a18] border border-[#edd8bd] rounded-full px-3 py-1.5">Specialist</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-6 flex items-center gap-2 flex-wrap">
+            <span id="agentModalStatusPill" class="inline-flex items-center gap-2 text-[11px] uppercase tracking-[0.16em] rounded-full px-4 py-2 bg-white border border-line">
+              <span class="h-2 w-2 rounded-full bg-[#32a852]"></span>
+              <span>WORKING</span>
+            </span>
+            <span id="agentModalLastActive" class="hidden inline-flex items-center text-[11px] bg-paper-100 border border-line rounded-full px-3 py-1.5 text-ink-600">
+              <span>Last active </span><span id="agentModalLastActiveTime">-</span>
+            </span>
+
+            <div class="mt-3 w-full bg-[#f2f2f2] border border-line rounded-xl2 p-4">
+              <div class="text-[11px] tracking-[0.22em] uppercase text-ink-500">Status Reason</div>
+              <div id="agentModalStatusReason" class="mt-2 text-sm text-ink-800">-</div>
+              <div id="agentModalSince" class="mt-3 text-xs text-ink-500">-</div>
+            </div>
+
+            <div class="mt-3 flex justify-end">
+              <button id="agentNextBtn" class="text-xs font-semibold bg-white border border-line rounded-full px-4 py-2 hover:bg-paper-200">Assign next recommended</button>
+            </div>
+
+            <div class="mt-4 grid grid-cols-1 gap-3">
+              <div class="bg-white border border-line rounded-xl2 p-4">
+                <div class="text-[11px] tracking-[0.22em] uppercase text-ink-500">Currently working on</div>
+                <div id="agentModalCurrentWork" class="mt-2 text-sm text-ink-800">-</div>
+              </div>
+              <div class="bg-white border border-line rounded-xl2 p-4">
+                <div class="text-[11px] tracking-[0.22em] uppercase text-ink-500">Last task worked on</div>
+                <div id="agentModalLastTask" class="mt-2 text-sm text-ink-800">-</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-8">
+            <div class="text-[11px] tracking-[0.22em] uppercase text-ink-500">About</div>
+            <div id="agentModalAbout" class="mt-3 text-sm text-ink-800 leading-relaxed">-</div>
+          </div>
+
+          <!-- Tabs -->
+          <div class="mt-8 border-b border-line flex gap-2 text-xs">
+            <button class="agentTab px-3 py-2 rounded-t-lg bg-white border border-line border-b-0" data-tab="attention">🔔 Attention <span id="agentTabAttentionCount" class="ml-1 text-ink-500">0</span></button>
+            <button class="agentTab px-3 py-2 rounded-t-lg text-ink-600" data-tab="timeline">🗓️ Timeline</button>
+            <button class="agentTab px-3 py-2 rounded-t-lg text-ink-600" data-tab="messages">💬 Messages</button>
+          </div>
+
+          <div id="agentTabPanels" class="bg-white border border-line border-t-0 rounded-b-xl2 p-4">
+            <div id="agentPanelAttention">
+              <div class="text-xs text-ink-600">Tasks & mentions needing attention</div>
+              <div id="agentMentionsList" class="mt-3 space-y-2"></div>
+            </div>
+            <div id="agentPanelTimeline" class="hidden">
+              <div id="agentTimelineList" class="space-y-3"></div>
+            </div>
+            <div id="agentPanelMessages" class="hidden">
+              <div class="text-xs text-ink-600">Send a message to this agent (stored in activity feed for now)</div>
+              <form id="agentMessageForm" class="mt-3">
+                <textarea id="agentMessageText" class="w-full text-sm bg-paper-50 border border-line rounded-xl px-4 py-3 min-h-[110px]" placeholder="Message @agent…"></textarea>
+                <div class="mt-3 flex justify-end">
+                  <button class="text-xs font-semibold bg-white border border-line rounded-full px-5 py-2.5 hover:bg-paper-200" type="submit">Send</button>
+                </div>
+              </form>
+            </div>
+
+            <!-- Stats panel (always visible under tabs) -->
+            <div class="mt-5 border-t border-line pt-4">
+              <div class="text-[11px] tracking-[0.22em] uppercase text-ink-500">Stats</div>
+              <div class="mt-3 grid grid-cols-2 gap-3">
+                <div class="bg-paper-50 border border-line rounded-xl p-3">
+                  <div class="text-[11px] text-ink-600">Tasks done</div>
+                  <div id="agentStatDone" class="mt-1 text-xl font-semibold">0</div>
+                </div>
+                <div class="bg-paper-50 border border-line rounded-xl p-3">
+                  <div class="text-[11px] text-ink-600">Active tasks</div>
+                  <div id="agentStatActive" class="mt-1 text-xl font-semibold">0</div>
+                </div>
+                <div class="bg-paper-50 border border-line rounded-xl p-3">
+                  <div class="text-[11px] text-ink-600">Due soon (≤1h)</div>
+                  <div id="agentStatDueSoon" class="mt-1 text-xl font-semibold">0</div>
+                </div>
+                <div class="bg-paper-50 border border-line rounded-xl p-3">
+                  <div class="text-[11px] text-ink-600">Overdue</div>
+                  <div id="agentStatOverdue" class="mt-1 text-xl font-semibold">0</div>
+                </div>
+                <div class="bg-paper-50 border border-line rounded-xl p-3">
+                  <div class="text-[11px] text-ink-600">Comments sent</div>
+                  <div id="agentStatComments" class="mt-1 text-xl font-semibold">0</div>
+                </div>
+                <div class="bg-paper-50 border border-line rounded-xl p-3">
+                  <div class="text-[11px] text-ink-600">Last seen</div>
+                  <div id="agentStatLastSeen" class="mt-1 text-sm font-semibold text-ink-800">-</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    @keyframes mcPulseBorder {
+      0% { box-shadow: 0 0 0 0 rgba(180, 35, 24, 0.45); }
+      70% { box-shadow: 0 0 0 6px rgba(180, 35, 24, 0.0); }
+      100% { box-shadow: 0 0 0 0 rgba(180, 35, 24, 0.0); }
+    }
+    .mc-critical {
+      border-color: #b42318 !important;
+      animation: mcPulseBorder 1.6s infinite;
+    }
+  </style>
+
+  <!-- Health modal -->
+  <div id="healthModal" class="fixed inset-0 z-50 hidden">
+    <div class="absolute inset-0 bg-black/30" data-close="health"></div>
+    <div class="absolute inset-x-0 top-16 mx-auto w-[900px] max-w-[95vw]">
+      <div class="bg-paper-50 border border-line rounded-xl2 shadow-soft overflow-hidden">
+        <div class="px-5 py-4 border-b border-line flex items-center justify-between">
+          <div>
+            <div class="text-[11px] tracking-[0.22em] uppercase font-semibold text-ink-700">Automation Health</div>
+            <div class="text-xs text-ink-600 mt-1">Workloop + queues + provider errors</div>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="healthRefreshBtn" class="text-[10px] tracking-[0.16em] uppercase bg-white border border-line rounded-full px-3 py-1.5 hover:bg-paper-200">Refresh</button>
+            <button class="h-8 w-8 rounded-full bg-white border border-line grid place-items-center hover:bg-paper-200" data-close="health" title="Close">✕</button>
+          </div>
+        </div>
+
+        <div class="p-5 grid grid-cols-3 gap-4">
+          <div class="rounded-xl2 border border-line bg-white p-4">
+            <div class="text-[10px] tracking-[0.22em] uppercase text-ink-600">Workloop</div>
+            <div id="healthWorkloop" class="mt-2 text-xs text-ink-700 space-y-1"></div>
+          </div>
+
+          <div class="rounded-xl2 border border-line bg-white p-4">
+            <div class="text-[10px] tracking-[0.22em] uppercase text-ink-600">Queues</div>
+            <div id="healthQueues" class="mt-2 text-xs text-ink-700 space-y-1"></div>
+          </div>
+
+          <div class="rounded-xl2 border border-line bg-white p-4">
+            <div class="text-[10px] tracking-[0.22em] uppercase text-ink-600">Errors (recent)</div>
+            <div id="healthErrors" class="mt-2 text-xs text-ink-700 space-y-2"></div>
+          </div>
+
+          <div class="col-span-3 rounded-xl2 border border-line bg-white p-4">
+            <div class="text-[10px] tracking-[0.22em] uppercase text-ink-600">Raw snapshot</div>
+            <pre id="healthRaw" class="mt-2 text-[11px] text-ink-700 whitespace-pre-wrap max-h-[320px] overflow-auto"></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mission Control wiring -->
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,1 @@
+/home/chris/.openclaw/workspace/dashboard/mc-cli.js

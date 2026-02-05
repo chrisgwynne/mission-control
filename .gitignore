@@ -1,0 +1,5 @@
+node_modules/
+mc.db
+*.state.json
+*.backup.*
+.DS_Store
