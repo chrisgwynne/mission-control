@@ -22,3 +22,6 @@ memory/memory.db-shm
 
 # OS/editor
 *.swp
+
+# agent reports (local artifacts)
+agents/*/reports/

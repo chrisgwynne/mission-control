@@ -14,6 +14,4 @@ jobs:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
-        working-directory: dashboard
       - run: npm test
-        working-directory: dashboard
