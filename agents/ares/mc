@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-BASE_URL="${MC_BASE_URL:-http://127.0.0.1:5173}"
-export MC_BASE_URL="$BASE_URL"
-exec node /home/chris/.openclaw/workspace/dashboard/mc-cli.js "$@"
